@@ -17,7 +17,10 @@ class StructuredConcept(BaseModel):
     one_line_definition: str
     key_operations: list[str]
     everyday_examples: list[str]
-
+    core_mechanism: str
+    prerequisite_ideas: list[str]
+    caution_terms: list[str]
+    
 class SearchQuery(BaseModel):
     concept_name: str
     concept_definition: str
