@@ -1,22 +1,9 @@
-CONCEPT_STRUCTURE_PROMPT = """
-당신은 AI 교육 전문가입니다.
-아래 AI 개념을 다음 형식에 맞게 정리해주세요.
-
-개념: {concept_name}
-
-반환 형식:
-- 한 줄 정의: (한 문장으로)
-- 핵심 조작: (이 개념이 하는 일 3가지, 리스트)
-- 일상 사례: (초등학생이 알 만한 예시 3가지, 리스트)
-- 카테고리: (분류 / 예측 / 패턴인식 / 군집화 중 하나)
-"""
-
 QUERY_REWRITE_PROMPT = """
 당신은 초등학교 교육과정 전문가입니다.
-아래 AI 용어를 초등 교과서 성취기준 말투로 바꿔주세요.
+아래 AI 개념 정의를 초등 교과서 성취기준 말투로 바꿔주세요.
 
-AI 용어: {concept_name}
-AI 개념 설명: {concept_definition}
+AI 개념: {concept_name}
+AI 개념 정의: {concept_definition}
 대상 학년: {target_grade}학년
 
 규칙:
