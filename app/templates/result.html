@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edutech - 교안 생성 결과</title>
+    <link rel="stylesheet" href="../static/style.css">
+    <style>
+        body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+        h1 { font-size: 1.4rem; text-align: center; margin-bottom: 1.5rem; }
+        table.form { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+        table.form th, table.form td { border: 1px solid #999; padding: 0.5rem 0.75rem; vertical-align: top; text-align: left; }
+        table.form th { background: #f2f2f2; width: 11rem; white-space: nowrap; }
+        table.form th.eval { background: #e3ecfa; }
+        .stage-label { font-weight: bold; white-space: nowrap; }
+        .stage-time { font-weight: normal; color: #555; font-size: 0.85rem; }
+        .activity { white-space: pre-line; }
+        ul.plain { margin: 0; padding-left: 1.1rem; }
+        ul.plain li { margin-bottom: 0.2rem; }
+    </style>
+</head>
+<body>
+    <h1>교수학습과정안</h1>
+
+    <table class="form">
+        <tr>
+            <th>차시(시간)</th>
+            <td>{{ lesson.lesson_time }}</td>
+        </tr>
+        <tr>
+            <th rowspan="2">교육 대상</th>
+            <td>학교급: {{ lesson.school_level }}</td>
+        </tr>
+        <tr>
+            <td>학년: {{ lesson.grade }}학년</td>
+        </tr>
+        <tr>
+            <th>학습 주제</th>
+            <td>{{ lesson.topic }}</td>
+        </tr>
+        <tr>
+            <th>관련 과목(영역)</th>
+            <td>{{ lesson.subject }}</td>
+        </tr>
+        <tr>
+            <th>성취 기준</th>
+            <td>{{ lesson.achievement_code }}</td>
+        </tr>
+        <tr>
+            <th>학습 목표</th>
+            <td>
+                <ul class="plain">
+                    {% for objective in lesson.learning_objectives %}
+                    <li>{{ objective }}</li>
+                    {% endfor %}
+                </ul>
+            </td>
+        </tr>
+        <tr>
+            <th>학습 준비물 및 활용 자료</th>
+            <td>{{ lesson.materials | join(", ") }}</td>
+        </tr>
+    </table>
+
+    <table class="form">
+        <tr>
+            <th>학습 단계(시간)</th>
+            <th>교수 학습 활동</th>
+            <th>도구 및 자료(□) / 유의점(◆)</th>
+        </tr>
+        {% for stage_label, stage in [("도입", lesson.lesson_stages.intro), ("전개", lesson.lesson_stages.development), ("정리", lesson.lesson_stages.wrap_up)] %}
+        <tr>
+            <td class="stage-label">{{ stage_label }}<br><span class="stage-time">({{ stage.time }})</span></td>
+            <td class="activity">{{ stage.activity }}</td>
+            <td>
+                <ul class="plain">
+                    {% for tool in stage.tools %}
+                    <li>□ {{ tool }}</li>
+                    {% endfor %}
+                    {% for note in stage.notes %}
+                    <li>◆ {{ note }}</li>
+                    {% endfor %}
+                </ul>
+            </td>
+        </tr>
+        {% endfor %}
+        <tr>
+            <th class="eval" colspan="3">평가 기준</th>
+        </tr>
+        <tr>
+            <td colspan="3">
+                <p><strong>상</strong> — {{ lesson.evaluation_criteria.high }}</p>
+                <p><strong>중</strong> — {{ lesson.evaluation_criteria.mid }}</p>
+                <p><strong>하</strong> — {{ lesson.evaluation_criteria.low }}</p>
+            </td>
+        </tr>
+    </table>
+
+    <h2>학생 활동지</h2>
+    <ol>
+        {% for item in lesson.worksheet %}
+        <li>{{ item }}</li>
+        {% endfor %}
+    </ol>
+</body>
+</html>
