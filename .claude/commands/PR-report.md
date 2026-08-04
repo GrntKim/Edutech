@@ -41,13 +41,13 @@ git diff | grep -E "os\.getenv\(.+,\s*['\"]"
 
 ## 2-b. 공용 문서(REQ SRS / README) 갱신 점검
 
-이 레포에는 별도 `docs` 브랜치나 `docs/context/*` 위키가 없다 — 각 브랜치가 자기 REQ 문서를 직접 소유하고 코드와 같은 PR에서 갱신한다(예: A2는 `curriculum-search-engine/REQ-002_교육과정검색엔진_SRS.md`, B는 `docs/mapping/REQ003-매핑에이전트.md`). **자기 담당 REQ 문서는 코드 변경과 함께 자유롭게 커밋해도 된다.**
+이 레포에는 별도 `docs` 브랜치나 `docs/context/*` 위키가 없다 — 각 브랜치가 자기 REQ 문서를 직접 소유하고 코드와 같은 PR에서 갱신한다(예: A2는 `docs/curriculum_search/REQ002-교육과정검색엔진.md`, B는 `docs/mapping/REQ003-매핑에이전트.md`). **자기 담당 REQ 문서는 코드 변경과 함께 자유롭게 커밋해도 된다.**
 
 주의가 필요한 경우만 아래처럼 처리한다:
 
 | 변경 유형 | 조치 |
 |-----------|------|
-| 자기 담당 REQ 문서(`docs/{내 모듈}/REQ*.md`, A2는 `curriculum-search-engine/REQ-002_*.md`) 수정 | 코드 PR에 함께 포함, 개정 이력(0장) 갱신 확인 |
+| 자기 담당 REQ 문서(`docs/{내 모듈}/REQ*.md`, A2는 `docs/curriculum_search/REQ002-*.md`) 수정 | 코드 PR에 함께 포함, 개정 이력(0장) 갱신 확인 |
 | 다른 담당자의 REQ 문서 수정 | 원 담당자 리뷰 없이 커밋 금지 — 사용자에게 확인 요청 |
 | `app/lib/types.py`(공유 타입) 변경 | Impact Assessor가 이미 HIGH로 판정하므로 여기선 추가 조치 불필요, PR 본문에 다운스트림 브랜치 리뷰 요청만 명시 |
 | `README.md` 담당 역할표 변경 | 코드 PR에 포함 가능. 단 `docs/SRS_정합성_검토_2026-08-04.md` 이슈 2-2(README가 E 역할 분리를 반영 못함)처럼 이미 알려진 미해결 이슈면 PR 본문에 언급만 하고 이번 PR 스코프에 넣을지는 사용자에게 확인 |

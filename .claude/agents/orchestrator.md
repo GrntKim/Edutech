@@ -50,7 +50,7 @@ tools: Task, Read, Bash, Grep, Glob
 | 브랜치 | REQ 문서 |
 |--------|---------|
 | `feature/a1-concept-collect` | `docs/concept_collect/REQ001-개념 수집.md` |
-| `feature/a2-curriculum-search-engine` | `curriculum-search-engine/REQ-002_교육과정검색엔진_SRS.md` |
+| `feature/a2-curriculum-search-engine` | `docs/curriculum_search/REQ002-교육과정검색엔진.md` |
 | `feature/b-mapping` | `docs/mapping/REQ003-매핑에이전트.md` |
 | `feature/c-lesson-generate` | `docs/lesson_generate/REQ004-교안생성.md` |
 | `feature/d-validate-orchestrate` | `docs/validate/REQ005-검증.md` |
