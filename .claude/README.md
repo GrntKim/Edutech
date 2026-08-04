@@ -29,4 +29,4 @@
 
 - 결정론적 로직(A2 검색, D 검증)은 **pytest**로, LLM이 생성하는 파트(A1/B/C)는 **골든셋 + rubric eval**로 서로 다르게 검증합니다.
 - 공유 계약은 `app/lib/types.py`(공유 타입) + 각자 REQ 문서의 스키마 절입니다. 이 둘을 건드리는 변경은 Impact Assessor가 자동으로 HIGH 리스크로 잡고 다운스트림 브랜치 리뷰를 요구합니다.
-- A2의 Recall@k 품질 평가는 pytest가 아니라 `app/scripts/eval_recall.py` 같은 독립 스크립트로 돕니다(Cloud SQL 불필요, 로컬 임베딩 캐시 사용) — Tester가 이 차이를 알고 있습니다.
+- A2의 Recall@k 품질 평가는 pytest가 아니라 `curriculum-search-engine/eval_recall.py` 같은 독립 스크립트로 돕니다(Cloud SQL 불필요, 로컬 임베딩 캐시 사용) — Tester가 이 차이를 알고 있습니다. `app/scripts/`엔 최종 파이프라인 실행에 실제로 필요한 `ingest_curriculum.py`만 남기고, 실험/벤치마킹 스크립트는 전부 `curriculum-search-engine/`에 둡니다.
