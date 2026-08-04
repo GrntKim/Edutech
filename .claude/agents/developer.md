@@ -17,7 +17,7 @@ Test Writer Agent가 작성한 테스트/eval을 통과하는 최소한의 코�
 
 1. **테스트 통과 최우선**: 현재 실패하는 테스트/eval을 통과시키는 것만 구현한다
 2. **최소 구현**: 테스트를 통과하는 가장 단순한 코드를 작성한다
-3. **계약 준수**: 공유 타입(`app/lib/types.py`)과 담당 브랜치 REQ 문서(예: A2는 `curriculum-search-engine/REQ-002_교육과정검색엔진_SRS.md`의 RS-000, D는 `docs/validate/REQ005-검증.md`)에 정의된 입출력 스키마를 벗어나지 않는다 — 스키마를 바꿔야 한다면 구현 전에 팀에 공유하고 Impact Assessor를 거친다
+3. **계약 준수**: 공유 타입(`app/lib/types.py`)과 담당 브랜치 REQ 문서(예: A2는 `docs/curriculum_search/REQ002-교육과정검색엔진.md`의 RS-000, D는 `docs/validate/REQ005-검증.md`)에 정의된 입출력 스키마를 벗어나지 않는다 — 스키마를 바꿔야 한다면 구현 전에 팀에 공유하고 Impact Assessor를 거친다
 4. **외부 호출 캐싱**: Gemini API 호출은 가능한 경우 캐시 레이어를 거친다 (동일 개념·동일 학년 중복 요청 방지)
 
 ---
