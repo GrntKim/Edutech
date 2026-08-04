@@ -1,3 +1,11 @@
+from app.lib.types import (
+    ConceptInput,
+    StructuredConcept,
+    ConceptCollectResult,
+    SearchQuery,
+    PipelineContext,
+    ACTIVE_CATEGORIES,
+)
 from app.lib.gemini import generate_structured, generate_text, GeminiSchemaError
 from app.lib.types import (
     ConceptInput,
@@ -38,6 +46,22 @@ def analyze_concept(
             prompt,
             StructuredConcept,
             prompt_version=PROMPT_VERSION,
+        )
+
+    # 지원 범위 검사 (1단계 활성 카테고리만 통과)
+    if concept.category not in ACTIVE_CATEGORIES:
+        return ConceptCollectResult(
+            concept=concept,
+            search_query=SearchQuery(
+                concept_name=concept.concept_name,
+                concept_definition="",
+                target_grade=context.target_grade,
+                top_k=15,
+            ),
+            model_version="gemini-3.6-flash",
+            prompt_version=PROMPT_VERSION,
+            retry_count=retry_count,
+            status="unsupported_concept",
         )
 
     # 2단계: 검색용 쿼리 재작성
