@@ -29,7 +29,7 @@ Test Writer Agent가 작성한 테스트/eval을 통과하는 최소한의 코�
 | 브랜치 | 실행 가능 스크립트 | import 전용 모듈 | 테스트/eval |
 |--------|-----------|------|--------|
 | `feature/a1-concept-collect` | — | `app/agents/concept_collect/` | `tests/agents/concept_collect/` |
-| `feature/a2-curriculum-search-engine` | `app/scripts/ingest_curriculum.py` | `app/agents/curriculum_search/` | `tests/agents/curriculum_search/` (+ `app/scripts/eval_*.py` 독립 평가 스크립트) |
+| `feature/a2-curriculum-search-engine` | `app/scripts/ingest_curriculum.py` | `app/agents/curriculum_search/` | `tests/agents/curriculum_search/` (+ `curriculum-search-engine/eval_*.py` 독립 평가 스크립트 — 최종 실행에 불필요한 실험용이라 `app/scripts/`가 아닌 이쪽에 둠) |
 | `feature/b-mapping` | — | `app/agents/mapping/` | `tests/agents/mapping/` |
 | `feature/c-lesson-generate` | — | `app/agents/lesson_generate/`, `app/templates/result.html` | `tests/agents/lesson_generate/` |
 | `feature/d-validate-orchestrate` | `app/agents/orchestrate.py` | `app/agents/validate/` | `tests/agents/validate/` |

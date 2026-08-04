@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-APP_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_ROOT))
 
 from agents.curriculum_search.logic import embedding_source_text  # noqa: E402

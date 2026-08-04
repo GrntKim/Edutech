@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from dotenv import load_dotenv
 
-APP_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT = Path(__file__).resolve().parents[1] / "app"
 REPO_ROOT = APP_ROOT.parent
 sys.path.insert(0, str(APP_ROOT))
 

@@ -13,7 +13,7 @@ import google.api_core.exceptions
 from dotenv import load_dotenv
 import numpy as np
 
-APP_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT = Path(__file__).resolve().parents[1] / "app"
 REPO_ROOT = APP_ROOT.parent
 sys.path.insert(0, str(APP_ROOT))
 
