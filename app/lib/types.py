@@ -5,6 +5,7 @@ from typing import Literal
 class Subject(str, Enum):
     MATH = "MATH"
     SCIENCE = "SCIENCE"
+    DOMESTIC_SCIENCE = "DOMESTIC_SCIENCE"
 
 
 class GradeBand(str, Enum):
