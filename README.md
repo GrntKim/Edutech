@@ -157,11 +157,12 @@ python app/scripts/ingest_curriculum.py
 
 | 담당 | 에이전트 | 주요 파일 | 담당자 |
 | --- | --- | --- | --- |
-| A1 | 개념 수집 | `agents/concept_collect/` | 박지민 |
-| A2 | 교육과정 검색 및 데이터 적재 | `agents/curriculum_search/`, `scripts/ingest_curriculum.py` | 나윤서 |
+| A1 | 개념 수집 | `agents/concept_collect/` | 나윤서 |
+| A2 | 교육과정 검색 및 데이터 적재 | `agents/curriculum_search/`, `scripts/ingest_curriculum.py` | 박지민 |
 | B | 매핑 | `agents/mapping/` | 현세은 | 
 | C | 교안 생성 | `agents/lesson_generate/`, `templates/result.html` | 이서현 | 
-| D | 검증, 오케스트레이션, 인프라 | `agents/validate/`, `agents/orchestrate.py`, `lib/`, 배포 전반 | 김준명 | 
+| D | 검증, 오케스트레이션 | `agents/validate/`, `agents/orchestrate.py` | 김준명 |
+| E | 사이트 전반 로직, 인프라 | `main.py`, `lib/`, `static/`, `templates/`, 배포 전반 | 김준명 |
 
 ## 참고 사항
 
