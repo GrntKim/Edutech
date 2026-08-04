@@ -2,6 +2,8 @@
 
 이 폴더는 우리 팀 TDD 사이클(Red → Green → Refactor)을 Claude Code 서브에이전트로 자동화하기 위한 설정입니다. 브랜치(A1~E) 구분 없이 전원이 공용으로 씁니다 — 각자 로컬에서 `git pull`만 받으면 바로 사용할 수 있습니다.
 
+폴더가 두 개로 나뉘어 있는 이유: `agents/`는 Task 도구로 호출되는 **서브에이전트**(자체 tools/컨텍스트를 가짐), `commands/`는 `/명령어`로 부르면 현재 대화에 프롬프트로 주입되는 **슬래시 커맨드**입니다. Claude Code는 이 두 경로(`.claude/agents/`, `.claude/commands/`)만 스캔하므로, 새 슬래시 커맨드를 추가할 땐 반드시 `commands/` 바로 아래에 둬야 인식됩니다(하위 폴더에 중첩하면 인식 안 됨).
+
 ## 있는 것
 
 | 파일 | 역할 | 언제 호출되나 |
@@ -15,7 +17,7 @@
 | `agents/security-auditor.md` | Gemini API 키·Cloud SQL 접속정보 하드코딩 여부 점검 | 코드 작성 직후 + git commit 직전 |
 | `agents/impact-assessor.md` | 변경이 공유 스키마(`app/lib/types.py`)나 다른 브랜치에 미치는 영향 분석, 리스크 등급 산정 | PR 생성 직전 |
 | `agents/reporter.md` | 작업 결과 보고서(`reports/*.md`) 생성 | 사이클 마지막 |
-| `agents/commands/PR-report.md` | 커밋~PR 생성까지 전 과정 자동화 (`/PR-report`로 호출) | PR 올릴 때 |
+| `commands/PR-report.md` | 커밋~PR 생성까지 전 과정 자동화 (`/PR-report`로 호출) | PR 올릴 때 |
 
 ## 어떻게 쓰나
 
@@ -28,5 +30,3 @@
 - 결정론적 로직(A2 검색, D 검증)은 **pytest**로, LLM이 생성하는 파트(A1/B/C)는 **골든셋 + rubric eval**로 서로 다르게 검증합니다.
 - 공유 계약은 `app/lib/types.py`(공유 타입) + 각자 REQ 문서의 스키마 절입니다. 이 둘을 건드리는 변경은 Impact Assessor가 자동으로 HIGH 리스크로 잡고 다운스트림 브랜치 리뷰를 요구합니다.
 - A2의 Recall@k 품질 평가는 pytest가 아니라 `app/scripts/eval_recall.py` 같은 독립 스크립트로 돕니다(Cloud SQL 불필요, 로컬 임베딩 캐시 사용) — Tester가 이 차이를 알고 있습니다.
-
-궁금한 게 생기면 해당 `.md` 파일을 직접 열어보는 게 가장 정확합니다 — 여기 표는 요약일 뿐입니다.
