@@ -1,17 +1,56 @@
+import asyncio
+from unittest.mock import AsyncMock
+
 import numpy as np
 import pytest
 
+from agents.curriculum_search import logic
 from agents.curriculum_search.logic import (
     CurriculumSearchError,
     _bigram_tokens,
     _cosine_similarities,
+    _fetch_band_rows,
+    _grade_band_weight,
     _reciprocal_rank_fusion,
+    _RerankMatch,
+    _RerankResponse,
     _row_to_chunk,
     _sparse_scores,
     embedding_source_text,
+    hybrid_search,
     resolve_grade_bands,
+    search_within_chunks,
 )
-from agents.curriculum_search.schema import CurriculumChunk, GradeBand, Subject
+from agents.curriculum_search.schema import CurriculumChunk, GradeBand, SearchQuery, Subject
+
+
+def _make_chunk(chunk_id="c1", grade_band=GradeBand.G3_4, **overrides):
+    defaults = dict(
+        chunk_id=chunk_id,
+        subject=Subject.MATH,
+        grade_band=grade_band,
+        unit_name="단원",
+        domain="영역",
+        core_idea="핵심 아이디어",
+        achievement_code=f"[{chunk_id}]",
+        achievement_text="성취기준 텍스트",
+        explanation="설명",
+        inquiry_activities=[],
+        source_page=1,
+    )
+    defaults.update(overrides)
+    return CurriculumChunk(**defaults)
+
+
+def _make_query(**overrides):
+    defaults = dict(
+        concept_name="군집화",
+        concept_definition="비슷한 것끼리 묶는다",
+        target_grade=4,
+        top_k=15,
+    )
+    defaults.update(overrides)
+    return SearchQuery(**defaults)
 
 
 class TestResolveGradeBands:
@@ -161,3 +200,250 @@ class TestRowToChunk:
     def test_null_inquiry_activities_becomes_empty_list(self):
         chunk, _ = _row_to_chunk(self._make_row(inquiry_activities=None))
         assert chunk.inquiry_activities == []
+
+
+class TestGradeBandWeight:
+    """RS-006 §9.8에서 골든셋 42행 스윕으로 확정된 가중치(1.0/0.8/0.6)를 검증한다."""
+
+    def test_same_band_weight_is_one(self):
+        assert _grade_band_weight(GradeBand.G3_4, GradeBand.G3_4) == pytest.approx(1.0)
+
+    def test_distance_one_weight_is_zero_point_eight(self):
+        assert _grade_band_weight(GradeBand.G1_2, GradeBand.G3_4) == pytest.approx(0.8)
+        assert _grade_band_weight(GradeBand.G3_4, GradeBand.G5_6) == pytest.approx(0.8)
+
+    def test_distance_two_weight_is_zero_point_six(self):
+        assert _grade_band_weight(GradeBand.G1_2, GradeBand.G5_6) == pytest.approx(0.6)
+
+    def test_chunk_band_above_query_band_raises_value_error(self):
+        """chunk_band가 query_band보다 상위 학년군이면(distance<0) 호출부가 학년군
+        필터링을 빠뜨렸다는 신호이므로, 조용히 fallback하지 않고 명시적으로 실패한다."""
+        with pytest.raises(ValueError, match="grade_band 불변식 위반"):
+            _grade_band_weight(GradeBand.G5_6, GradeBand.G1_2)
+        with pytest.raises(ValueError, match="grade_band 불변식 위반"):
+            _grade_band_weight(GradeBand.G3_4, GradeBand.G1_2)
+
+
+class TestSearchWithinChunks:
+    def _run(self, query, chunks, embeddings):
+        return asyncio.run(search_within_chunks(query, chunks, embeddings))
+
+    def test_empty_chunks_returns_empty_list_without_calling_embed_or_rerank(self, monkeypatch):
+        embed_mock = AsyncMock()
+        rerank_mock = AsyncMock()
+        monkeypatch.setattr(logic, "embed_text", embed_mock)
+        monkeypatch.setattr(logic, "_llm_rerank", rerank_mock)
+
+        result = self._run(_make_query(), [], [])
+
+        assert result == []
+        embed_mock.assert_not_called()
+        rerank_mock.assert_not_called()
+
+    def test_normal_case_returns_results_matching_llm_order_and_dense_score(self, monkeypatch):
+        chunks = [_make_chunk("c1"), _make_chunk("c2")]
+        embeddings = [np.array([1.0, 0.0]), np.array([0.0, 1.0])]
+        monkeypatch.setattr(logic, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+        monkeypatch.setattr(
+            logic,
+            "_llm_rerank",
+            AsyncMock(
+                return_value=_RerankResponse(
+                    matches=[
+                        _RerankMatch(chunk_id="c2", reasoning="r2"),
+                        _RerankMatch(chunk_id="c1", reasoning="r1"),
+                    ]
+                )
+            ),
+        )
+
+        results = self._run(_make_query(top_k=5), chunks, embeddings)
+
+        assert [r.chunk.chunk_id for r in results] == ["c2", "c1"]
+        assert [r.rank for r in results] == [1, 2]
+        assert results[0].reasoning == "r2"
+        # c2=[0,1]은 질의([1,0])와 직교 -> 0.0, c1=[1,0]은 질의와 동일 -> 1.0
+        assert results[0].similarity_score == pytest.approx(0.0)
+        assert results[1].similarity_score == pytest.approx(1.0)
+
+    def test_llm_matches_with_unknown_chunk_id_are_filtered_and_rank_stays_contiguous(
+        self, monkeypatch
+    ):
+        """방금 고친 rank 버그의 회귀 테스트: 후보 목록에 없는 chunk_id는 걸러내고,
+        남은 매치의 rank는 걸러낸 뒤 순서로 1부터 연속으로 매겨져야 한다."""
+        chunks = [_make_chunk("c1"), _make_chunk("c2"), _make_chunk("c3")]
+        embeddings = [np.array([1.0, 0.0]), np.array([0.0, 1.0]), np.array([1.0, 1.0])]
+        monkeypatch.setattr(logic, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+        monkeypatch.setattr(
+            logic,
+            "_llm_rerank",
+            AsyncMock(
+                return_value=_RerankResponse(
+                    matches=[
+                        _RerankMatch(chunk_id="nonexistent", reasoning="유령"),
+                        _RerankMatch(chunk_id="c1", reasoning="r1"),
+                        _RerankMatch(chunk_id="c3", reasoning="r3"),
+                    ]
+                )
+            ),
+        )
+
+        results = self._run(_make_query(top_k=5), chunks, embeddings)
+
+        assert [r.chunk.chunk_id for r in results] == ["c1", "c3"]
+        assert [r.rank for r in results] == [1, 2]
+
+    def test_top_k_limits_results_after_unknown_chunk_ids_are_filtered(self, monkeypatch):
+        chunks = [_make_chunk(f"c{i}") for i in range(1, 4)]
+        embeddings = [np.array([1.0, 0.0]) for _ in chunks]
+        monkeypatch.setattr(logic, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+        monkeypatch.setattr(
+            logic,
+            "_llm_rerank",
+            AsyncMock(
+                return_value=_RerankResponse(
+                    matches=[
+                        _RerankMatch(chunk_id="nonexistent", reasoning="유령"),
+                        _RerankMatch(chunk_id="c1", reasoning="r1"),
+                        _RerankMatch(chunk_id="c2", reasoning="r2"),
+                        _RerankMatch(chunk_id="c3", reasoning="r3"),
+                    ]
+                )
+            ),
+        )
+
+        results = self._run(_make_query(top_k=2), chunks, embeddings)
+
+        assert len(results) == 2
+        assert [r.chunk.chunk_id for r in results] == ["c1", "c2"]
+        assert [r.rank for r in results] == [1, 2]
+
+    def test_llm_empty_matches_returns_empty_results(self, monkeypatch):
+        chunks = [_make_chunk("c1")]
+        embeddings = [np.array([1.0, 0.0])]
+        monkeypatch.setattr(logic, "embed_text", AsyncMock(return_value=[1.0, 0.0]))
+        monkeypatch.setattr(
+            logic, "_llm_rerank", AsyncMock(return_value=_RerankResponse(matches=[]))
+        )
+
+        results = self._run(_make_query(), chunks, embeddings)
+
+        assert results == []
+
+
+class TestHybridSearch:
+    def test_empty_rows_returns_empty_list_without_calling_search_within_chunks(self, monkeypatch):
+        monkeypatch.setattr(logic, "_fetch_band_rows", lambda grade_bands: [])
+        search_mock = AsyncMock()
+        monkeypatch.setattr(logic, "search_within_chunks", search_mock)
+
+        result = asyncio.run(hybrid_search(_make_query()))
+
+        assert result == []
+        search_mock.assert_not_called()
+
+    def test_database_error_is_wrapped_as_curriculum_search_error(self, monkeypatch):
+        def _raise(grade_bands):
+            raise logic.DatabaseError("연결 실패")
+
+        monkeypatch.setattr(logic, "_fetch_band_rows", _raise)
+
+        with pytest.raises(CurriculumSearchError):
+            asyncio.run(hybrid_search(_make_query()))
+
+    def test_rows_are_parsed_into_chunks_and_delegated_to_search_within_chunks(self, monkeypatch):
+        row = (
+            "c1",
+            "MATH",
+            "G3_4",
+            "단원",
+            "영역",
+            "핵심 아이디어",
+            "[c1]",
+            "성취기준",
+            "설명",
+            [],
+            1,
+            [0.1, 0.2],
+        )
+        monkeypatch.setattr(logic, "_fetch_band_rows", lambda grade_bands: [row])
+
+        captured = {}
+
+        async def _fake_search_within_chunks(query, chunks, embeddings):
+            captured["query"] = query
+            captured["chunks"] = chunks
+            captured["embeddings"] = embeddings
+            return ["dummy-result"]
+
+        monkeypatch.setattr(logic, "search_within_chunks", _fake_search_within_chunks)
+
+        query = _make_query()
+        result = asyncio.run(hybrid_search(query))
+
+        assert result == ["dummy-result"]
+        assert captured["query"] is query
+        assert len(captured["chunks"]) == 1
+        assert captured["chunks"][0].chunk_id == "c1"
+        assert isinstance(captured["embeddings"][0], np.ndarray)
+
+
+class TestFetchBandRows:
+    class _FakeCursor:
+        def __init__(self, fetchall_result):
+            self.executed: list[tuple] = []
+            self._fetchall_result = fetchall_result
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, query, params=None):
+            self.executed.append((query, params))
+
+        def fetchall(self):
+            return self._fetchall_result
+
+    class _FakeConnection:
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return self._cursor
+
+    def _patch_connection(self, monkeypatch, cursor):
+        from contextlib import contextmanager
+
+        fake_conn = self._FakeConnection(cursor)
+
+        @contextmanager
+        def fake_get_connection():
+            yield fake_conn
+
+        monkeypatch.setattr(logic, "get_connection", fake_get_connection)
+        return cursor
+
+    def test_sql_params_use_grade_band_string_values(self, monkeypatch):
+        cursor = self._patch_connection(monkeypatch, self._FakeCursor(fetchall_result=[]))
+
+        _fetch_band_rows([GradeBand.G1_2, GradeBand.G3_4])
+
+        query, params = cursor.executed[0]
+        assert params == {"grade_bands": ["G1_2", "G3_4"]}
+        assert "grade_band = ANY(%(grade_bands)s)" in query
+
+    def test_returns_fetchall_result(self, monkeypatch):
+        rows = [("row1",), ("row2",)]
+        cursor = self._patch_connection(monkeypatch, self._FakeCursor(fetchall_result=rows))
+
+        result = _fetch_band_rows([GradeBand.G1_2])
+
+        assert result == rows
