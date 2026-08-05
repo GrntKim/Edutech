@@ -24,6 +24,7 @@ SOURCE_FILES = [
     (RAW_DIR / "math_book.pdf", Subject.MATH),
     (RAW_DIR / "science_book.pdf", Subject.SCIENCE),
     (RAW_DIR / "domestic_science_book.pdf", Subject.DOMESTIC_SCIENCE),
+    (RAW_DIR / "art_book.pdf", Subject.ART),
 ]
 
 _ELEMENTARY_GRADE_BANDS = {
@@ -38,6 +39,8 @@ _NOISE_LINES = {
     "과학과 교육과정",
     "실과(기술⋅가정)/정보과 교육과정",
     "공통 교육과정 – 실과(기술⋅가정) -",
+    "미술",
+    "초등학교 교육과정",
 }
 
 _TOP_LEVEL_SECTION_RE = re.compile(r"^\d+\.\s*\S")
