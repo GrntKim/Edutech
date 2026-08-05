@@ -42,7 +42,7 @@ class CurriculumChunk(BaseModel):
 class SearchQuery(BaseModel):
     concept_name: str
     concept_definition: str
-    target_grade: int
+    target_grade: int = Field(ge=1, le=6)
     top_k: int = 15
 
 
