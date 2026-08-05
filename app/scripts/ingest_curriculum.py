@@ -12,7 +12,7 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = APP_ROOT.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.agents.curriculum_search.logic import embed_text, embedding_source_text  # noqa: E402
+from app.agents.curriculum_search.logic import embed_texts, embedding_source_text  # noqa: E402
 from app.agents.curriculum_search.schema import CurriculumChunk, GradeBand, Subject  # noqa: E402
 from app.lib.db import DatabaseError, get_connection  # noqa: E402
 
@@ -113,10 +113,102 @@ def parse_core_ideas(pages: list[str]) -> dict[str, str]:
     return {domain: " ".join(bullets) for domain, bullets in core_ideas.items()}
 
 
+def _apply_achievement_line(
+    line: str,
+    records: dict[str, dict],
+    domain_index: dict[tuple, list[str]],
+    current_domain: str | None,
+    current_grade_band: GradeBand | None,
+    current_code: str | None,
+    core_ideas: dict[str, str],
+    page_no: int,
+    subject: Subject,
+) -> str | None:
+    """'나. 성취기준' 영역 내 성취기준 코드/본문 줄을 파싱해 records에 반영한다.
+
+    성취기준 코드 줄([4수03-05] ...)이면 새 record를 만들고 domain_index에
+    (domain, grade_band) -> chunk_id 매핑을 추가한다. 그 외 줄은 직전 코드의
+    achievement_text에 이어붙인다. 반환값은 갱신된 current_code다.
+    """
+    achievement_match = _ACHIEVEMENT_RE.match(line)
+    if achievement_match:
+        code, text = achievement_match.groups()
+        records[code] = {
+            "chunk_id": code,
+            "subject": subject,
+            "grade_band": current_grade_band,
+            "unit_name": current_domain,
+            "domain": current_domain,
+            "core_idea": core_ideas.get(current_domain) or current_domain,
+            "achievement_code": f"[{code}]",
+            "achievement_text": text.strip(),
+            "explanation": "",
+            "inquiry_activities": [],
+            "source_page": page_no,
+            "_domain": current_domain,
+            "_grade_band": current_grade_band,
+            "_consideration": "",
+        }
+        domain_index.setdefault((current_domain, current_grade_band), []).append(code)
+        return code
+    if current_code is not None:
+        records[current_code]["achievement_text"] += " " + line
+    return current_code
+
+
+def _apply_inquiry_line(
+    line: str,
+    records: dict[str, dict],
+    domain_index: dict[tuple, list[str]],
+    current_domain: str | None,
+    current_grade_band: GradeBand | None,
+    domain_inquiry: list[str],
+) -> None:
+    """<탐구 활동> 불릿 줄을 domain_inquiry에 누적하고, 같은 (domain, grade_band)에
+    속한 모든 record의 inquiry_activities를 갱신한다.
+
+    대상 record는 domain_index에서 조회한다 — records 전체를 매 불릿 라인마다
+    순회하지 않기 위함이다.
+    """
+    bullet_match = _BULLET_RE.match(line)
+    if not bullet_match:
+        return
+    domain_inquiry.append(bullet_match.group(1).strip())
+    for chunk_id in domain_index.get((current_domain, current_grade_band), []):
+        records[chunk_id]["inquiry_activities"] = list(domain_inquiry)
+
+
+def _apply_explanation_line(
+    line: str,
+    records: dict[str, dict],
+    current_code: str | None,
+) -> str | None:
+    """(가) 성취기준 해설 영역의 '• [코드] 설명' 또는 이어지는 줄을 파싱한다."""
+    bullet_match = _BULLET_CODE_RE.match(line)
+    if bullet_match:
+        code, text = bullet_match.groups()
+        if code in records:
+            records[code]["explanation"] = text.strip()
+        return code
+    if current_code is not None and current_code in records:
+        records[current_code]["explanation"] += " " + line
+    return current_code
+
+
+def _apply_consideration_line(line: str, domain_consideration: list[str]) -> None:
+    """(나) 성취기준 적용 시 고려 사항 영역의 불릿/이어지는 줄을 누적한다."""
+    bullet_match = _BULLET_RE.match(line)
+    if bullet_match:
+        domain_consideration.append(bullet_match.group(1).strip())
+    elif domain_consideration:
+        domain_consideration[-1] += " " + line
+
+
 def parse_achievement_records(pages: list[str], subject: Subject) -> list[dict]:
     core_ideas = parse_core_ideas(pages)
 
     records: dict[str, dict] = {}
+    domain_index: dict[tuple, list[str]] = {}
     in_standards_section = False
     current_grade_band: GradeBand | None = None
     current_domain: str | None = None
@@ -208,53 +300,28 @@ def parse_achievement_records(pages: list[str], subject: Subject) -> list[dict]:
             continue
 
         if mode == "achievement":
-            achievement_match = _ACHIEVEMENT_RE.match(line)
-            if achievement_match:
-                code, text = achievement_match.groups()
-                current_code = code
-                records[code] = {
-                    "chunk_id": code,
-                    "subject": subject,
-                    "grade_band": current_grade_band,
-                    "unit_name": current_domain,
-                    "domain": current_domain,
-                    "core_idea": core_ideas.get(current_domain) or current_domain,
-                    "achievement_code": f"[{code}]",
-                    "achievement_text": text.strip(),
-                    "explanation": "",
-                    "inquiry_activities": [],
-                    "source_page": page_no,
-                    "_domain": current_domain,
-                    "_grade_band": current_grade_band,
-                    "_consideration": "",
-                }
-            elif current_code is not None:
-                records[current_code]["achievement_text"] += " " + line
+            current_code = _apply_achievement_line(
+                line,
+                records,
+                domain_index,
+                current_domain,
+                current_grade_band,
+                current_code,
+                core_ideas,
+                page_no,
+                subject,
+            )
 
         elif mode == "inquiry":
-            bullet_match = _BULLET_RE.match(line)
-            if bullet_match:
-                domain_inquiry.append(bullet_match.group(1).strip())
-                for record in records.values():
-                    if record["_domain"] == current_domain and record["_grade_band"] == current_grade_band:
-                        record["inquiry_activities"] = list(domain_inquiry)
+            _apply_inquiry_line(
+                line, records, domain_index, current_domain, current_grade_band, domain_inquiry
+            )
 
         elif mode == "explanation":
-            bullet_match = _BULLET_CODE_RE.match(line)
-            if bullet_match:
-                code, text = bullet_match.groups()
-                current_code = code
-                if code in records:
-                    records[code]["explanation"] = text.strip()
-            elif current_code is not None and current_code in records:
-                records[current_code]["explanation"] += " " + line
+            current_code = _apply_explanation_line(line, records, current_code)
 
         elif mode == "consideration":
-            bullet_match = _BULLET_RE.match(line)
-            if bullet_match:
-                domain_consideration.append(bullet_match.group(1).strip())
-            elif domain_consideration:
-                domain_consideration[-1] += " " + line
+            _apply_consideration_line(line, domain_consideration)
 
     flush_domain_consideration()
 
@@ -272,9 +339,13 @@ def parse_achievement_records(pages: list[str], subject: Subject) -> list[dict]:
 def build_curriculum_chunks() -> list[CurriculumChunk]:
     chunks: list[CurriculumChunk] = []
     errors: list[str] = []
+    empty_sources: list[str] = []
     for path, subject in SOURCE_FILES:
         pages = extract_pages(path)
-        for raw in parse_achievement_records(pages, subject):
+        records = parse_achievement_records(pages, subject)
+        if not records:
+            empty_sources.append(path.name)
+        for raw in records:
             try:
                 chunks.append(CurriculumChunk(**raw))
             except ValidationError as exc:
@@ -282,6 +353,14 @@ def build_curriculum_chunks() -> list[CurriculumChunk]:
 
     if errors:
         raise ValueError("파싱 결과 검증 실패:\n" + "\n".join(errors))
+    if empty_sources:
+        # 정규식 매칭 실패는 예외를 던지지 않고 조용히 건너뛰므로, PDF 포맷이
+        # 바뀌면 특정 과목이 통째로 0건 파싱돼도 사람이 숫자를 눈으로 대조하기
+        # 전까지 드러나지 않는다. 이걸 여기서 명시적으로 잡아 조기에 실패시킨다.
+        raise ValueError(
+            "파싱 결과가 0건인 파일이 있습니다(PDF 포맷 변경 의심): "
+            + ", ".join(empty_sources)
+        )
     return chunks
 
 
@@ -293,7 +372,7 @@ def write_curriculum_units(chunks: list[CurriculumChunk]) -> None:
 
 
 async def embed_chunks(chunks: list[CurriculumChunk]) -> list[list[float]]:
-    return [await embed_text(embedding_source_text(chunk)) for chunk in chunks]
+    return await embed_texts([embedding_source_text(chunk) for chunk in chunks])
 
 
 _UPSERT_SQL = """
