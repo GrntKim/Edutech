@@ -1,0 +1,19 @@
+# REQ-003(B) Mapping Agent
+#
+# criteria_scores(LLM 생성) -> confidence(서버 계산) 가중 평균에 쓰는 가중치와,
+# confidence 값을 flags로 분류하는 임계값을 정의한다.
+# 가중치 합계는 반드시 1.0이어야 한다.
+
+weights:
+  semantic_similarity: 0.25
+  educational_fit: 0.30
+  student_level: 0.20
+  analogy: 0.15
+  achievement_alignment: 0.10
+
+thresholds:
+  # confidence >= normal: 정상 (flags 없음)
+  normal: 0.75
+  # low <= confidence < normal: low_confidence
+  # confidence < low: remap_recommended
+  low: 0.5
