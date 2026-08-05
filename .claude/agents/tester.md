@@ -48,10 +48,10 @@ python -m pytest tests/agents/curriculum_search/test_schema.py -v 2>&1
 python -m pytest tests/agents/curriculum_search/test_logic.py -v 2>&1
 
 # Recall@k / 임베딩 모델 비교 — pytest 아님, 로컬 캐시 사용(Cloud SQL 불필요)
-python app/scripts/eval_recall.py
+python curriculum-search-engine/eval_recall.py
 ```
 
-> A2는 다른 브랜치와 달리 Recall 품질 평가가 pytest 밖에서(`app/scripts/eval_*.py`) 돌아간다. Tester는 이 스크립트를 실행하고 `app/data/eval_*_results_*.json` 출력을 결과로 수집하되, pytest의 PASS/FAIL/SKIP 형식이 아니므로 Recall@k 수치를 직접 읽어 NFR-002-2(80% 이상) 충족 여부로 판정한다.
+> A2는 다른 브랜치와 달리 Recall 품질 평가가 pytest 밖에서(`curriculum-search-engine/eval_*.py`) 돌아간다. 이 스크립트들은 최종 파이프라인 실행에 필요 없는 실험용이라 `app/scripts/`(프로덕션, `ingest_curriculum.py`만 있음)가 아니라 `curriculum-search-engine/`에 있다. Tester는 이 스크립트를 실행하고 `app/data/eval_*_results_*.json` 출력을 결과로 수집하되, pytest의 PASS/FAIL/SKIP 형식이 아니므로 Recall@k 수치를 직접 읽어 NFR-002-2(80% 이상) 충족 여부로 판정한다.
 
 ### feature/b-mapping
 
@@ -155,4 +155,4 @@ FAIL 항목:
 1. `.env`의 접속 정보를 로그나 출력에 노출하지 않는다
 2. Gemini API 호출이 반복되는 eval(rubric) 테스트는 비용이 발생하므로, 로컬 반복 실행 시 캐시된 응답을 우선 사용하고 필요할 때만 실제 호출한다
 3. Cloud SQL 연결 실패 시 재시도 없이 즉시 Orchestrator에 보고한다
-4. 골든셋은 브랜치별로 관리 위치가 다르다 — A2는 `curriculum-search-engine/RS-005_골든셋_라벨링_보정.csv`(고정 CSV), A1/B/C는 `tests/fixtures/`(각 모듈 rubric eval fixture)를 사용한다. 실행마다 값이 바뀌지 않게 한다
+4. 골든셋은 브랜치별로 관리 위치가 다르다 — A2는 `curriculum-search-engine/RS-005_골든셋.csv`(최종본, 42행, 고정 CSV), A1/B/C는 `tests/fixtures/`(각 모듈 rubric eval fixture)를 사용한다. 실행마다 값이 바뀌지 않게 한다

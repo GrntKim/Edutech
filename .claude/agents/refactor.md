@@ -44,7 +44,7 @@ tools: Read, Edit, Bash, Glob, Grep
 
 아래 항목은 리팩토링 대상에서 제외한다:
 - 테스트/eval 파일 (`tests/` 폴더)
-- REQ 문서 (`docs/*/REQ*.md`, `curriculum-search-engine/REQ-002_*.md`), 공유 타입(`app/lib/types.py`)
+- REQ 문서 (`docs/{module}/REQ*.md`, A2는 `docs/curriculum_search/REQ002-*.md`), 공유 타입(`app/lib/types.py`)
 - 환경 설정 (`.env`)
 - 임베딩 캐시(`app/data/embeddings_cache/`), 골든셋 파일(`curriculum-search-engine/RS-005_*.csv`)
 

@@ -22,7 +22,7 @@ tools: Read, Write, Glob, Grep
 | 브랜치 | 디렉토리 | 형식 |
 |--------|--------------|------|
 | `feature/a1-concept-collect` | `tests/agents/concept_collect/` | pytest(스키마·예외처리) + eval fixture(rubric) |
-| `feature/a2-curriculum-search-engine` | `tests/agents/curriculum_search/` | pytest (`test_schema.py`: 스키마, `test_logic.py`: 파싱·메타데이터 필터 등 결정론적 로직). **Recall@k는 pytest가 아니라 `app/scripts/eval_recall.py` 독립 스크립트로 측정한다** (Cloud SQL 불필요, `app/data/embeddings_cache/` 로컬 캐시 + `curriculum-search-engine/RS-005_골든셋_라벨링_보정.csv` 사용) |
+| `feature/a2-curriculum-search-engine` | `tests/agents/curriculum_search/` | pytest (`test_schema.py`: 스키마, `test_logic.py`: 파싱·메타데이터 필터 등 결정론적 로직). **Recall@k는 pytest가 아니라 `curriculum-search-engine/eval_recall.py` 독립 스크립트로 측정한다** (Cloud SQL 불필요, `app/data/embeddings_cache/` 로컬 캐시 + `curriculum-search-engine/RS-005_골든셋.csv`(최종 골든셋, 42행) 사용) |
 | `feature/b-mapping` | `tests/agents/mapping/` | pytest(출력 스키마) + eval fixture(선택 정확도 rubric) |
 | `feature/c-lesson-generate` | `tests/agents/lesson_generate/` | eval fixture(형식 완비성 rubric) |
 | `feature/d-validate-orchestrate` | `tests/agents/validate/` | pytest (금지 용어 매칭, 재귀 루프 종료 조건) |
@@ -49,11 +49,11 @@ def test_grade_1_excludes_higher_bands():
 
 ### A2 — Recall@k 골든셋 평가 (pytest 아님 — 독립 스크립트)
 
-`app/scripts/eval_recall.py`가 이미 이 역할을 수행 중이다. Cloud SQL에 접속하지 않고 `app/data/embeddings_cache/`에 미리 저장한 임베딩 캐시와 `curriculum-search-engine/RS-005_골든셋_라벨링_보정.csv`를 읽어 모델별 Recall@k(k=1,3,5,10)를 계산한다. 신규 평가 스크립트를 추가할 때는 이 골격을 따른다(pytest로 작성하지 않는다 — DB/Gemini 실호출 없이 반복 실행 가능해야 하므로 `if __name__ == "__main__":` 스크립트가 더 적합):
+`curriculum-search-engine/eval_recall.py`가 이미 이 역할을 수행 중이다. 최종 파이프라인 실행에는 필요 없는 실험용 스크립트라 `app/scripts/`(프로덕션, `ingest_curriculum.py`만 있음)가 아니라 `curriculum-search-engine/`에 둔다. Cloud SQL에 접속하지 않고 `app/data/embeddings_cache/`에 미리 저장한 임베딩 캐시와 `curriculum-search-engine/RS-005_골든셋.csv`(최종 골든셋, 42행)를 읽어 모델별 Recall@k(k=1,3,5,10)를 계산한다. 신규 평가 스크립트를 추가할 때는 이 골격을 따른다(pytest로 작성하지 않는다 — DB/Gemini 실호출 없이 반복 실행 가능해야 하므로 `if __name__ == "__main__":` 스크립트가 더 적합):
 
 ```python
-# app/scripts/eval_recall.py 골격
-def load_answered_rows() -> list[dict]: ...      # 골든셋 CSV에서 "없음"이 아닌 행만
+# curriculum-search-engine/eval_recall.py 골격
+def load_answered_rows() -> list[dict]: ...      # 골든셋 CSV에서 chunk_id가 채워진 행만
 def load_chunks() -> list[CurriculumChunk]: ...   # app/data/curriculum_units.json
 def recall_at_k(model_name, rows, chunks) -> dict:
     # 캐시된 임베딩(app/data/embeddings_cache/{model}.npz) 로드 → 코사인 유사도 → top-k 안에 정답 포함 여부 집계
@@ -139,7 +139,7 @@ def test_max_retry_terminates_without_infinite_loop(monkeypatch):
 ### A2 (교육과정 검색)
 - PDF 파싱 정확도(샘플 20건 수작업 대조)
 - 학년군 매핑 정확성(3↔4학년 동일 band, 1↔2학년 동일 band)
-- Recall@15 골든셋 통과율(NFR-002-2: 80% 이상, `app/scripts/eval_recall.py`로 측정)
+- Recall@15 골든셋 통과율(NFR-002-2: 80% 이상, `curriculum-search-engine/eval_recall.py`로 측정)
 - 쿼리 임베딩과 인덱싱 임베딩 모델 일치 여부
 
 ### B (매핑)
