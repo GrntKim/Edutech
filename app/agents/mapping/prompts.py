@@ -1,116 +1,135 @@
-from app.lib.types import StructuredConcept, SearchResult, PipelineContext
+"""
+REQ-003 Mapping Agent Prompt
 
+LLM Prompt Builder
+"""
+
+from lib.types import StructuredConcept, SearchResult
 
 SYSTEM_PROMPT = """
-당신은 초·중학교 AI 교육 전문가입니다.
+You are an expert in mapping AI concepts to the Korean elementary curriculum.
 
-주어진 AI 개념과 교육과정 후보 중 가장 적절한 단원 하나를 선택하세요.
+Your task is to choose ONLY ONE curriculum chunk from the given candidates.
 
-규칙
-1. 반드시 후보 목록 안에서만 선택합니다.
-2. 의미 유사성, 교육적 적합성, 학생 이해도, 비유 가능성, 성취기준 정합성을 종합적으로 평가합니다.
-3. 대상 학년(target_grade)에 맞는 설명과 비유를 생성합니다.
-4. JSON 이외의 문장은 출력하지 않습니다.
+Rules:
+
+1. Never create a new chunk_id.
+2. You MUST choose one of the provided candidates.
+3. Do NOT perform additional search.
+4. Use A2 reasoning only as reference.
+5. Select the curriculum chunk that best explains the AI concept.
+6. Generate:
+   - chunk_id
+   - mapping_reason
+   - analogy
+   - criteria_scores
+7. Do NOT generate confidence.
+8. Every criteria score must be between 0.0 and 1.0.
+9. Return JSON only.
 """
 
 
-def build_prompt(
-    concept: StructuredConcept,
-    candidates: list[SearchResult],
-    context: PipelineContext,
-) -> str:
-    """LLM에 전달할 User Prompt 생성"""
-
-    candidate_text = []
-
-    for candidate in candidates:
-        chunk = candidate.chunk
-
-        candidate_text.append(
-            f"""
-[후보 {candidate.rank}]
-chunk_id: {chunk.chunk_id}
-과목: {chunk.subject.value}
-학년군: {chunk.grade_band.value}
-단원명: {chunk.unit_name}
-영역: {chunk.domain}
-
-핵심 아이디어:
-{chunk.core_idea}
-
-성취기준:
-{chunk.achievement_text}
-
-설명:
-{chunk.explanation}
-
-탐구활동:
-{", ".join(chunk.inquiry_activities)}
-
-검색 근거:
-{candidate.reasoning or "없음"}
-"""
-        )
+def format_candidate(result: SearchResult) -> str:
+    chunk = result.chunk
 
     return f"""
-{SYSTEM_PROMPT}
+Chunk ID: {chunk.chunk_id}
 
-========================
+Subject: {chunk.subject}
+Grade Band: {chunk.grade_band}
 
-AI 개념
+Unit Name:
+{chunk.unit_name}
 
-이름:
+Core Idea:
+{chunk.core_idea}
+
+Achievement Code:
+{chunk.achievement_code}
+
+Achievement Text:
+{chunk.achievement_text}
+
+Explanation:
+{chunk.explanation}
+
+Inquiry Activities:
+{", ".join(chunk.inquiry_activities)}
+
+Similarity Score:
+{result.similarity_score:.3f}
+
+Search Reasoning:
+{result.reasoning or "N/A"}
+"""
+
+
+def build_user_prompt(
+    concept: StructuredConcept,
+    search_results: list[SearchResult],
+    target_grade: int,
+) -> str:
+
+    candidates = "\n\n".join(
+        [
+            f"========== Candidate {i+1} ==========\n{format_candidate(r)}"
+            for i, r in enumerate(search_results)
+        ]
+    )
+
+    return f"""
+# Target Grade
+
+{target_grade}
+
+# AI Concept
+
+Concept Name:
 {concept.concept_name}
 
-카테고리:
-{concept.category.value}
-
-한 줄 정의:
+Definition:
 {concept.one_line_definition}
 
-핵심 원리:
+Core Mechanism:
 {concept.core_mechanism}
 
-핵심 동작:
+Key Operations:
 {", ".join(concept.key_operations)}
 
-선행 개념:
+Prerequisite Ideas:
 {", ".join(concept.prerequisite_ideas)}
 
-생활 예시:
+Everyday Examples:
 {", ".join(concept.everyday_examples)}
 
-학생에게 노출하면 안 되는 용어:
-{", ".join(concept.caution_terms)}
+# Candidate Curriculum Chunks
 
-========================
+{candidates}
 
-대상 학년:
-{context.target_grade}
+# Evaluation Criteria
 
-과목 힌트:
-{context.subject_hint.value if context.subject_hint else "없음"}
+Evaluate candidates using:
 
-========================
+1. semantic_similarity
+2. educational_fit
+3. student_level
+4. analogy
+5. achievement_alignment
 
-교육과정 후보
+# Output Format
 
-{''.join(candidate_text)}
-
-========================
-
-반드시 아래 JSON 형식으로만 응답하세요.
+Return JSON only.
 
 {{
-    "chunk_id": "...",
-    "mapping_reason": "...",
-    "analogy": "...",
-    "criteria_scores": {{
-        "semantic_similarity": 0.0,
-        "educational_fit": 0.0,
-        "student_level": 0.0,
-        "analogy": 0.0,
-        "achievement_alignment": 0.0
-    }}
+  "chunk_id": "...",
+  "mapping_reason": "...",
+  "analogy": "...",
+  "criteria_scores": {{
+      "semantic_similarity": 0.0,
+      "educational_fit": 0.0,
+      "student_level": 0.0,
+      "analogy": 0.0,
+      "achievement_alignment": 0.0
+  }}
 }}
 """
