@@ -4,16 +4,8 @@ from app.lib.types import (
     ConceptCollectResult,
     SearchQuery,
     PipelineContext,
-    ACTIVE_CATEGORIES,
 )
 from app.lib.gemini import generate_structured, generate_text, GeminiSchemaError
-from app.lib.types import (
-    ConceptInput,
-    StructuredConcept,
-    ConceptCollectResult,
-    SearchQuery,
-    PipelineContext,
-)
 from app.agents.concept_collect.prompts import (
     CONCEPT_ANALYSIS_PROMPT,
     QUERY_REWRITE_PROMPT,
@@ -21,6 +13,30 @@ from app.agents.concept_collect.prompts import (
 
 PROMPT_VERSION = "v1.0"
 
+# ambiguous_input 판정용 (LLM 호출 전, 쿼터 미소모)
+BROAD_TERMS = frozenset({
+    "AI",
+    "A.I.",
+    "에이아이",
+    "인공지능",
+    "컴퓨터",
+})
+MIN_LENGTH = 2
+MAX_LENGTH = 50
+
+
+def _is_ambiguous(raw_name: str) -> bool:
+    """규칙 기반 모호 입력 판정. True면 LLM 호출 없이 ambiguous_input 반환."""
+    name = raw_name.strip()
+    if not name:
+        return True
+    if len(name) < MIN_LENGTH or len(name) > MAX_LENGTH:
+        return True
+    if not any(ch.isalpha() for ch in name):
+        return True
+    if name.upper().replace(" ", "") in {t.upper().replace(" ", "") for t in BROAD_TERMS}:
+        return True
+    return False
 
 def analyze_concept(
     concept_input: ConceptInput,
@@ -29,6 +45,30 @@ def analyze_concept(
     """AI 개념을 구조화하고 교육과정 검색용 쿼리로 재작성한다."""
 
     retry_count = 0
+    # 0단계: 모호 입력 규칙 판정 (Gemini 호출 없음)
+    if _is_ambiguous(concept_input.raw_concept_name):
+        return ConceptCollectResult(
+            concept=StructuredConcept(
+                is_ai_concept=False,
+                concept_name=concept_input.raw_concept_name.strip(),
+                one_line_definition="",
+                core_mechanism="",
+                key_operations=[],
+                prerequisite_ideas=[],
+                everyday_examples=[],
+                caution_terms=[],
+            ),
+            search_query=SearchQuery(
+                concept_name=concept_input.raw_concept_name.strip(),
+                concept_definition="",
+                target_grade=context.target_grade,
+                top_k=15,
+            ),
+            model_version="gemini-3.6-flash",
+            prompt_version=PROMPT_VERSION,
+            retry_count=0,
+            status="ambiguous_input",
+        )
 
     # 1단계: 개념 구조화
     prompt = CONCEPT_ANALYSIS_PROMPT.format(
@@ -48,8 +88,8 @@ def analyze_concept(
             prompt_version=PROMPT_VERSION,
         )
 
-    # 지원 범위 검사 (1단계 활성 카테고리만 통과)
-    if concept.category not in ACTIVE_CATEGORIES:
+    # 도메인 범위 검사 (AI 개념이 아니면 즉시 반환)
+    if not concept.is_ai_concept:
         return ConceptCollectResult(
             concept=concept,
             search_query=SearchQuery(
