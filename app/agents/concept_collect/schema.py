@@ -1,5 +1,4 @@
 from app.lib.types import (
-    ConceptCategory,
     ConceptInput,
     StructuredConcept,
     ConceptCollectResult,
@@ -7,7 +6,6 @@ from app.lib.types import (
 )
 
 __all__ = [
-    "ConceptCategory",
     "ConceptInput",
     "StructuredConcept",
     "ConceptCollectResult",
