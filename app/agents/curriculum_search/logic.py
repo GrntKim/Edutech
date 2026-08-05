@@ -281,11 +281,11 @@ async def search_within_chunks(
 
     rerank = await _llm_rerank(query, candidates, query.top_k)
 
+    valid_matches = [match for match in rerank.matches if match.chunk_id in candidate_by_id]
+
     results: list[SearchResult] = []
-    for rank, match in enumerate(rerank.matches[: query.top_k], start=1):
-        chunk = candidate_by_id.get(match.chunk_id)
-        if chunk is None:
-            continue
+    for rank, match in enumerate(valid_matches[: query.top_k], start=1):
+        chunk = candidate_by_id[match.chunk_id]
         results.append(
             SearchResult(
                 chunk=chunk,
