@@ -1,21 +1,20 @@
 import asyncio
 import json
-import os
 import re
 import sys
 from pathlib import Path
 
 import pdfplumber
-import psycopg
 from dotenv import load_dotenv
-from pgvector.psycopg import register_vector_async
 from pydantic import ValidationError
 
 APP_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(APP_ROOT))
+PROJECT_ROOT = APP_ROOT.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from agents.curriculum_search.logic import embed_text, embedding_source_text  # noqa: E402
-from agents.curriculum_search.schema import CurriculumChunk, GradeBand, Subject  # noqa: E402
+from app.agents.curriculum_search.logic import embed_text, embedding_source_text  # noqa: E402
+from app.agents.curriculum_search.schema import CurriculumChunk, GradeBand, Subject  # noqa: E402
+from app.lib.db import DatabaseError, get_connection  # noqa: E402
 
 RAW_DIR = APP_ROOT / "data" / "raw"
 OUTPUT_PATH = APP_ROOT / "data" / "curriculum_units.json"
@@ -297,23 +296,6 @@ async def embed_chunks(chunks: list[CurriculumChunk]) -> list[list[float]]:
     return [await embed_text(embedding_source_text(chunk)) for chunk in chunks]
 
 
-_CREATE_EXTENSION_SQL = "CREATE EXTENSION IF NOT EXISTS vector"
-_CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS curriculum_chunks (
-    chunk_id TEXT PRIMARY KEY,
-    subject TEXT NOT NULL,
-    grade_band TEXT NOT NULL,
-    unit_name TEXT NOT NULL,
-    domain TEXT NOT NULL,
-    core_idea TEXT NOT NULL,
-    achievement_code TEXT NOT NULL,
-    achievement_text TEXT NOT NULL,
-    explanation TEXT NOT NULL,
-    inquiry_activities TEXT[] NOT NULL DEFAULT '{}',
-    source_page INTEGER NOT NULL,
-    embedding VECTOR(768) NOT NULL
-)
-"""
 _UPSERT_SQL = """
 INSERT INTO curriculum_chunks (
     chunk_id, subject, grade_band, unit_name, domain, core_idea,
@@ -339,44 +321,35 @@ ON CONFLICT (chunk_id) DO UPDATE SET
 """
 
 
-def _db_kwargs() -> dict:
-    return {
-        "dbname": os.environ["DB_NAME"],
-        "user": os.environ["DB_USER"],
-        "password": os.environ["DB_PASSWORD"],
-        "host": os.environ["DB_HOST"],
-        "port": os.environ["DB_PORT"],
-    }
+def _upsert_chunks_sync(chunks: list[CurriculumChunk], embeddings: list[list[float]]) -> None:
+    params = [
+        {
+            "chunk_id": chunk.chunk_id,
+            "subject": chunk.subject.value,
+            "grade_band": chunk.grade_band.value,
+            "unit_name": chunk.unit_name,
+            "domain": chunk.domain,
+            "core_idea": chunk.core_idea,
+            "achievement_code": chunk.achievement_code,
+            "achievement_text": chunk.achievement_text,
+            "explanation": chunk.explanation,
+            "inquiry_activities": chunk.inquiry_activities,
+            "source_page": chunk.source_page,
+            "embedding": embedding,
+        }
+        for chunk, embedding in zip(chunks, embeddings)
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(_UPSERT_SQL, params)
+        conn.commit()
 
 
 async def upsert_chunks(chunks: list[CurriculumChunk], embeddings: list[list[float]]) -> None:
     try:
-        async with await psycopg.AsyncConnection.connect(**_db_kwargs()) as conn:
-            await conn.execute(_CREATE_EXTENSION_SQL)
-            await register_vector_async(conn)
-            await conn.execute(_CREATE_TABLE_SQL)
-            async with conn.cursor() as cur:
-                params = [
-                    {
-                        "chunk_id": chunk.chunk_id,
-                        "subject": chunk.subject.value,
-                        "grade_band": chunk.grade_band.value,
-                        "unit_name": chunk.unit_name,
-                        "domain": chunk.domain,
-                        "core_idea": chunk.core_idea,
-                        "achievement_code": chunk.achievement_code,
-                        "achievement_text": chunk.achievement_text,
-                        "explanation": chunk.explanation,
-                        "inquiry_activities": chunk.inquiry_activities,
-                        "source_page": chunk.source_page,
-                        "embedding": embedding,
-                    }
-                    for chunk, embedding in zip(chunks, embeddings)
-                ]
-                await cur.executemany(_UPSERT_SQL, params)
-            await conn.commit()
-    except psycopg.OperationalError as exc:
-        raise RuntimeError(f"Cloud SQL 연결 실패: {exc}") from exc
+        await asyncio.to_thread(_upsert_chunks_sync, chunks, embeddings)
+    except DatabaseError as exc:
+        raise RuntimeError(f"Cloud SQL 적재 실패: {exc}") from exc
 
 
 async def main() -> None:

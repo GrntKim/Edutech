@@ -1,15 +1,13 @@
 import asyncio
-import os
 import re
 
 import numpy as np
-import psycopg
-from pgvector.psycopg import register_vector_async
 from pydantic import BaseModel
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
-from lib.gemini import GeminiError, generate_structured
+from app.lib.db import DatabaseError, get_connection
+from app.lib.gemini import GeminiError, generate_structured
 from .prompts import build_rerank_prompt
 from .schema import GRADE_TO_BANDS, CurriculumChunk, GradeBand, SearchQuery, SearchResult
 
@@ -219,27 +217,26 @@ async def _llm_rerank(query: SearchQuery, candidates: list[CurriculumChunk], top
         raise CurriculumSearchError(f"LLM 리랭킹 실패: {exc}") from exc
 
 
-def _db_kwargs() -> dict:
-    return {
-        "dbname": os.environ["DB_NAME"],
-        "user": os.environ["DB_USER"],
-        "password": os.environ["DB_PASSWORD"],
-        "host": os.environ["DB_HOST"],
-        "port": os.environ["DB_PORT"],
-    }
+def _fetch_band_rows(grade_bands: list[GradeBand]) -> list[tuple]:
+    """lib.db.get_connection()은 동기 함수라(팀 공용 계층, psycopg 직접 import 금지 —
+    REQ-006 NFR-006-4), 블로킹 호출을 asyncio.to_thread로 감싸 쓴다. embedding 컬럼은
+    lib.db의 공용 조회 함수(get_chunks_by_scope 등)에 일부러 없음(CurriculumChunk에
+    embedding 필드가 없어서) — 벡터가 필요한 A2는 get_connection()으로 직접 커서를 얻어
+    자체 SQL(_FETCH_BAND_SQL)을 쓴다(lib/db.py docstring에 이 용례가 명시되어 있음).
+    """
+    params = {"grade_bands": [band.value for band in grade_bands]}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_FETCH_BAND_SQL, params)
+            return cur.fetchall()
 
 
 async def hybrid_search(query: SearchQuery) -> list[SearchResult]:
     grade_bands = resolve_grade_bands(query.target_grade)
 
-    params = {"grade_bands": [band.value for band in grade_bands]}
     try:
-        async with await psycopg.AsyncConnection.connect(**_db_kwargs()) as conn:
-            await register_vector_async(conn)
-            async with conn.cursor() as cur:
-                await cur.execute(_FETCH_BAND_SQL, params)
-                rows = await cur.fetchall()
-    except psycopg.OperationalError as exc:
+        rows = await asyncio.to_thread(_fetch_band_rows, grade_bands)
+    except DatabaseError as exc:
         raise CurriculumSearchError(f"Cloud SQL 연결 실패: {exc}") from exc
 
     if not rows:
