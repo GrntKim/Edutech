@@ -1,5 +1,6 @@
 import asyncio
 import re
+import threading
 
 import numpy as np
 from pydantic import BaseModel
@@ -68,10 +69,26 @@ _GRADE_DISTANCE_WEIGHT = {0: 1.0, 1: 0.8, 2: 0.6}
 
 
 def _grade_band_weight(chunk_band: GradeBand, query_band: GradeBand) -> float:
+    """chunk_band는 query_band보다 상위 학년군일 수 없다는 불변식을 전제한다 —
+    GRADE_TO_BANDS가 누적 구조라 target_grade의 후보는 항상 query_band 이하의
+    학년군에서만 온다(RS-006 §9.5). 이 불변식이 깨졌다면(distance<0) 호출부가
+    학년군 필터링을 빠뜨린 신호이므로, 조용히 fallback하지 않고 즉시 실패시켜
+    잘못된 가중치가 결과에 섞여 들어가는 걸 막는다."""
     distance = _GRADE_BAND_ORDER.index(query_band) - _GRADE_BAND_ORDER.index(chunk_band)
+    if distance < 0:
+        raise ValueError(
+            f"grade_band 불변식 위반: chunk_band={chunk_band.value}가 "
+            f"query_band={query_band.value}보다 상위 학년군입니다. "
+            "호출부가 학년군 필터링을 빠뜨렸을 가능성이 있습니다."
+        )
     return _GRADE_DISTANCE_WEIGHT.get(distance, _GRADE_DISTANCE_WEIGHT[2])
 
 _model: SentenceTransformer | None = None
+# _get_model()은 asyncio.to_thread로 실제 워커 스레드에서 실행되므로(embed_text 참고),
+# 동시 요청 시 check-then-set이 스레드 안전하지 않다. asyncio.Lock이 아니라
+# threading.Lock을 쓰는 이유도 이 함수가 이벤트 루프가 아닌 워커 스레드에서 돈다는
+# 점과 같은 이유다.
+_model_lock = threading.Lock()
 
 _TOKEN_RE = re.compile(r"[가-힣A-Za-z0-9]+")
 
@@ -108,14 +125,16 @@ def resolve_grade_bands(target_grade: int) -> list[GradeBand]:
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        with _model_lock:
+            if _model is None:
+                _model = SentenceTransformer(EMBEDDING_MODEL)
     return _model
 
 
 async def embed_text(text: str, *, is_query: bool = False) -> list[float]:
-    """is_query=False(기본)면 passage 프리픽스를 적용한다 — ingest_curriculum.py의
-    embed_chunks()는 청크(passage) 임베딩이라 기본값을 그대로 쓴다. 질의 임베딩은
-    search_within_chunks()에서 is_query=True로 명시적으로 호출한다."""
+    """is_query=False(기본)면 passage 프리픽스를 적용한다. 질의 임베딩은
+    search_within_chunks()에서 is_query=True로 명시적으로 호출한다. 청크를 여러 개
+    한 번에 임베딩할 때(ingest_curriculum.py)는 단건 반복 대신 embed_texts()를 쓴다."""
     prefix = (_QUERY_PREFIX if is_query else _PASSAGE_PREFIX).get(EMBEDDING_MODEL, "")
     try:
         model = await asyncio.to_thread(_get_model)
@@ -123,6 +142,21 @@ async def embed_text(text: str, *, is_query: bool = False) -> list[float]:
     except Exception as exc:
         raise CurriculumSearchError(f"임베딩 생성 실패: {exc}") from exc
     return embedding.tolist()
+
+
+async def embed_texts(texts: list[str], *, is_query: bool = False) -> list[list[float]]:
+    """embed_text의 배치 버전. SentenceTransformer.encode는 리스트 입력을 한 번의
+    forward pass로 처리하므로, 청크마다 별도 asyncio.to_thread 디스패치를 반복하던
+    ingest_curriculum.py의 embed_chunks()가 이걸 쓴다."""
+    if not texts:
+        return []
+    prefix = (_QUERY_PREFIX if is_query else _PASSAGE_PREFIX).get(EMBEDDING_MODEL, "")
+    try:
+        model = await asyncio.to_thread(_get_model)
+        embeddings = await asyncio.to_thread(model.encode, [prefix + text for text in texts])
+    except Exception as exc:
+        raise CurriculumSearchError(f"임베딩 생성 실패: {exc}") from exc
+    return [embedding.tolist() for embedding in embeddings]
 
 
 def embedding_source_text(chunk: CurriculumChunk) -> str:

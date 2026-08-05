@@ -230,3 +230,20 @@ class TestBuildCurriculumChunks:
 
         assert len(chunks) == len(ingest_curriculum.SOURCE_FILES)
         assert all(isinstance(chunk, CurriculumChunk) for chunk in chunks)
+
+    def test_one_source_file_parsing_to_zero_records_raises(self, monkeypatch):
+        """PDF 포맷이 바뀌어 정규식이 매칭에 실패하면 parse_achievement_records가
+        예외 없이 빈 리스트를 반환한다 - 그 침묵을 여기서 명시적으로 실패시킨다."""
+        monkeypatch.setattr(ingest_curriculum, "extract_pages", lambda path: [])
+
+        def fake_parse(pages, subject):
+            if subject == Subject.SCIENCE:
+                return []
+            return [self._valid_record(f"{subject.value}-01", subject)]
+
+        monkeypatch.setattr(ingest_curriculum, "parse_achievement_records", fake_parse)
+
+        with pytest.raises(ValueError) as exc_info:
+            ingest_curriculum.build_curriculum_chunks()
+
+        assert "science_book.pdf" in str(exc_info.value)

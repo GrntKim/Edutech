@@ -215,13 +215,13 @@ class TestGradeBandWeight:
     def test_distance_two_weight_is_zero_point_six(self):
         assert _grade_band_weight(GradeBand.G1_2, GradeBand.G5_6) == pytest.approx(0.6)
 
-    def test_negative_distance_silently_falls_back_to_distance_two_weight(self):
-        """chunk_band가 query_band보다 상위 학년군이면(distance<0) _GRADE_DISTANCE_WEIGHT에
-        없는 키라 .get(distance, [2])의 기본값(0.6)으로 조용히 fallback한다. 이 fallback이
-        "의도된 방어"인지 "불변식이 깨진 신호"인지는 구분되지 않는다 — 현재 동작을 그대로
-        명세하는 테스트(의도 확정을 위한 것이 아님)."""
-        assert _grade_band_weight(GradeBand.G5_6, GradeBand.G1_2) == pytest.approx(0.6)
-        assert _grade_band_weight(GradeBand.G3_4, GradeBand.G1_2) == pytest.approx(0.6)
+    def test_chunk_band_above_query_band_raises_value_error(self):
+        """chunk_band가 query_band보다 상위 학년군이면(distance<0) 호출부가 학년군
+        필터링을 빠뜨렸다는 신호이므로, 조용히 fallback하지 않고 명시적으로 실패한다."""
+        with pytest.raises(ValueError, match="grade_band 불변식 위반"):
+            _grade_band_weight(GradeBand.G5_6, GradeBand.G1_2)
+        with pytest.raises(ValueError, match="grade_band 불변식 위반"):
+            _grade_band_weight(GradeBand.G3_4, GradeBand.G1_2)
 
 
 class TestSearchWithinChunks:
