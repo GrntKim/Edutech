@@ -339,9 +339,19 @@ ON CONFLICT (chunk_id) DO UPDATE SET
 """
 
 
+def _db_kwargs() -> dict:
+    return {
+        "dbname": os.environ["DB_NAME"],
+        "user": os.environ["DB_USER"],
+        "password": os.environ["DB_PASSWORD"],
+        "host": os.environ["DB_HOST"],
+        "port": os.environ["DB_PORT"],
+    }
+
+
 async def upsert_chunks(chunks: list[CurriculumChunk], embeddings: list[list[float]]) -> None:
     try:
-        async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as conn:
+        async with await psycopg.AsyncConnection.connect(**_db_kwargs()) as conn:
             await conn.execute(_CREATE_EXTENSION_SQL)
             await register_vector_async(conn)
             await conn.execute(_CREATE_TABLE_SQL)
