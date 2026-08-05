@@ -1,0 +1,238 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edutech - 교안 생성 결과</title>
+    <link rel="stylesheet" href="../static/style.css">
+    <style>
+        body { font-family: sans-serif; font-size: 10pt; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+        h1 { font-size: 1.4rem; text-align: center; margin-bottom: 1.5rem; }
+        table.form { width: 97%; margin: 0 auto 1rem; border-collapse: collapse; }
+        table.form th, table.form td { border: 1px solid #999; padding: 0.5rem 0.75rem; vertical-align: top; text-align: left; }
+        table.form th { background: #f2f2f2; text-align: center; }
+        table.meta th { width: 11rem; white-space: nowrap; background: #D4E0EC; color: #000; }
+        table.form th.eval { background: #e3ecfa; }
+        table.eval-table { width: 100%; border-collapse: collapse; }
+        table.eval-table th, table.eval-table td { border: 1px solid #999; padding: 0.3rem 0.5rem; text-align: left; }
+        table.eval-table th { background: #f2f2f2; text-align: center; width: 3rem; }
+        table.form th.stage-header { background: #D4E0EC; color: #000; }
+        .stage-label { font-weight: bold; white-space: nowrap; text-align: center; background: #D4E0EC; color: #000; }
+        .content-label { font-weight: bold; white-space: nowrap; }
+        .stage-time { font-weight: normal; color: #555; white-space: nowrap; text-align: center; }
+        .tools-notes { font-size: 9pt; }
+        .activity { white-space: pre-line; }
+        .content-heading { font-weight: bold; margin-bottom: 0.4rem; }
+        .procedure-box { border: 1px solid #333; border-radius: 4px; padding: 0.5rem 0.75rem; margin: 0 0 0.5rem; white-space: pre-line; }
+        .announce-cell { white-space: normal; }
+        .announce-headers { display: flex; justify-content: space-between; gap: 1rem; font-weight: bold; white-space: pre-line; margin-bottom: 0.5rem; }
+        .announce-box { border: 1px solid #333; border-radius: 4px; padding: 0.5rem 0.75rem; text-align: center; white-space: pre-line; }
+        ul.plain { margin: 0; padding-left: 1.1rem; }
+        ul.plain li { margin-bottom: 0.2rem; }
+        .worksheet-sheet { border: 2px solid #333; border-radius: 8px; padding: 1.25rem 1.5rem; margin-top: 0.5rem; }
+        .worksheet-sheet h3 { text-align: center; margin: 0 0 0.5rem; font-size: 1.2rem; }
+        .worksheet-mission { background: #fff6e0; border: 1px solid #e0c878; border-radius: 6px; padding: 0.6rem 0.9rem; margin-bottom: 1.25rem; }
+        .worksheet-section { margin-bottom: 1.25rem; padding: 0.75rem 1rem; border-radius: 6px; border-left: 5px solid; }
+        .worksheet-section.color-a { background: #eef6ff; border-left-color: #5b9bd5; }
+        .worksheet-section.color-b { background: #eefaf0; border-left-color: #4caf7d; }
+        .worksheet-section.color-c { background: #fdf2ff; border-left-color: #b06fd6; }
+        .worksheet-section.color-d { background: #fff7e8; border-left-color: #e0a83c; }
+        .worksheet-section .step-label { font-weight: bold; margin-bottom: 0.3rem; }
+        .worksheet-section .instruction { margin: 0 0 0.4rem; white-space: pre-line; }
+        .worksheet-reflection { background: #eef3ff; border: 1px solid #c3d2f0; border-radius: 6px; padding: 0.75rem 1rem; }
+        .worksheet-reflection h4 { margin: 0 0 0.5rem; }
+        table.worksheet-table { width: 100%; border-collapse: collapse; margin: 0.5rem 0 0.75rem; }
+        table.worksheet-table th, table.worksheet-table td { border: 1px solid #999; padding: 0.4rem 0.6rem; text-align: left; }
+        table.worksheet-table th { background: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>교수학습과정안</h1>
+
+    <table class="form meta">
+        <tr>
+            <th>차시(시간)</th>
+            <td>{{ lesson.lesson_time }}</td>
+        </tr>
+        <tr>
+            <th rowspan="2">교육 대상</th>
+            <td>학교급: {{ lesson.school_level }}</td>
+        </tr>
+        <tr>
+            <td>학년: {{ lesson.grade }}학년</td>
+        </tr>
+        <tr>
+            <th>학습 주제</th>
+            <td>{{ lesson.topic }}</td>
+        </tr>
+        <tr>
+            <th>관련 과목(영역)</th>
+            <td>{{ lesson.subject }}</td>
+        </tr>
+        <tr>
+            <th>성취 기준</th>
+            <td>{{ lesson.achievement_code }}</td>
+        </tr>
+        <tr>
+            <th>학습 목표</th>
+            <td>
+                <ul class="plain">
+                    {% for objective in lesson.learning_objectives %}
+                    <li>{{ objective }}</li>
+                    {% endfor %}
+                </ul>
+            </td>
+        </tr>
+        <tr>
+            <th>학습 준비물 및<br>활용 자료</th>
+            <td>{{ lesson.materials | join(", ") }}</td>
+        </tr>
+        <tr>
+            <th>AI·디지털 도구</th>
+            <td>{{ lesson.ai_digital_tool }}</td>
+        </tr>
+    </table>
+
+    <table class="form" style="table-layout: fixed;">
+        <colgroup>
+            <col style="width: 9.5%;">
+            <col style="width: 12.5%;">
+            <col style="width: 27.5%;">
+            <col style="width: 27.5%;">
+            <col style="width: 7.2%;">
+            <col style="width: 15.8%;">
+        </colgroup>
+        <tr>
+            <th class="stage-header" rowspan="2">학습 단계</th>
+            <th class="stage-header" rowspan="2">학습 내용</th>
+            <th class="stage-header" colspan="2">교수 학습 활동</th>
+            <th class="stage-header" rowspan="2">시간<br>(분)</th>
+            <th class="stage-header tools-notes" rowspan="2">도구 및 자료(□) / 유의점(◆)</th>
+        </tr>
+        <tr>
+            <th class="stage-header">교사 활동</th>
+            <th class="stage-header">학생 활동</th>
+        </tr>
+        {% set content_label_breaks = {
+            "전시학습 상기": "전시학습<br>상기",
+            "학습 문제 안내하기": "학습 문제<br>안내하기",
+            "학습 내용 정리": "학습 내용<br>정리",
+        } %}
+        {% for stage_label, activities in [("도입", lesson.lesson_stages.intro), ("전개", lesson.lesson_stages.development), ("정리", lesson.lesson_stages.wrap_up)] %}
+        {% for act in activities %}
+        <tr>
+            {% if loop.first %}
+            <td class="stage-label" rowspan="{{ activities | length }}">{{ stage_label }}</td>
+            {% endif %}
+            <td class="content-label">{{ content_label_breaks.get(act.content_label, act.content_label) | safe }}</td>
+            {% if act.content_label == "학습 문제 안내하기" %}
+            <td class="activity announce-cell" colspan="2">
+                <div class="announce-headers">
+                    <span>{{ act.teacher.split("\n")[0] }}</span>
+                    <span>{{ act.student.split("\n")[0] }}</span>
+                </div>
+                <div class="announce-box">{{ act.teacher.split("\n", 1)[1] if "\n" in act.teacher else "" }}</div>
+            </td>
+            {% elif act.content_label in ["활동1", "활동2"] %}
+            {% set lines = act.teacher.split("\n") %}
+            {% set rest = lines[1:] %}
+            {% set has_prompt = rest and rest[-1].startswith("T : ") %}
+            {% set procedure_lines = rest[:-1] if has_prompt else rest %}
+            {% set prompt_line = rest[-1] if has_prompt else "" %}
+            <td class="activity">
+                <div class="content-heading">{{ lines[0] }}</div>
+                {% if procedure_lines %}
+                <div class="procedure-box">{{ procedure_lines | join("\n") }}</div>
+                {% endif %}
+                {% if prompt_line %}
+                <div>{{ prompt_line }}</div>
+                {% endif %}
+            </td>
+            {% set student_lines = act.student.split("\n") %}
+            <td class="activity">
+                <div class="content-heading">{{ student_lines[0] }}</div>
+                {% if student_lines[1:] %}
+                <div>{{ student_lines[1:] | join("\n") }}</div>
+                {% endif %}
+            </td>
+            {% else %}
+            <td class="activity">{{ act.teacher }}</td>
+            <td class="activity">{{ act.student }}</td>
+            {% endif %}
+            <td class="stage-time">{{ act.time }}</td>
+            <td class="tools-notes">
+                <ul class="plain">
+                    {% for tool in act.tools %}
+                    <li>□ {{ tool }}</li>
+                    {% endfor %}
+                    {% for note in act.notes %}
+                    <li>◆ {{ note }}</li>
+                    {% endfor %}
+                </ul>
+            </td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+        <tr>
+            <th class="eval" colspan="6">평가 기준</th>
+        </tr>
+        <tr>
+            <td colspan="6">
+                <table class="eval-table">
+                    <tr><th>상</th><td>{{ lesson.evaluation_criteria.high }}</td></tr>
+                    <tr><th>중</th><td>{{ lesson.evaluation_criteria.mid }}</td></tr>
+                    <tr><th>하</th><td>{{ lesson.evaluation_criteria.low }}</td></tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    {% if lesson.worksheet %}
+    <h2>학생 활동지</h2>
+    <div class="worksheet-sheet">
+        <h3>{{ lesson.worksheet.icon }} {{ lesson.worksheet.title }}</h3>
+        <div class="worksheet-mission">{{ lesson.worksheet.mission }}</div>
+
+        {% for section in lesson.worksheet.sections %}
+        <div class="worksheet-section {{ loop.cycle('color-a', 'color-b', 'color-c', 'color-d') }}">
+            <div class="step-label">{{ section.step_label }}</div>
+            <p class="instruction">{{ section.instruction }}</p>
+            {% if section.table %}
+            <table class="worksheet-table">
+                <tr>
+                    {% for header in section.table.headers %}
+                    <th>{{ header }}</th>
+                    {% endfor %}
+                </tr>
+                {% for row in section.table.rows %}
+                <tr>
+                    {% for cell in row %}
+                    <td>{{ cell }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </table>
+            {% endif %}
+            {% if section.items %}
+            <ol class="plain">
+                {% for item in section.items %}
+                <li>{{ item }}</li>
+                {% endfor %}
+            </ol>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        <div class="worksheet-reflection">
+            <h4>생각해 보기</h4>
+            <ol class="plain">
+                {% for question in lesson.worksheet.reflection_questions %}
+                <li>{{ question }}</li>
+                {% endfor %}
+            </ol>
+        </div>
+    </div>
+    {% endif %}
+</body>
+</html>
