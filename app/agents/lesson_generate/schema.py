@@ -63,7 +63,7 @@ def build_lesson_input(
 
 
 class AchievementStandard(BaseModel):
-    """curriculum_units 테이블 조회 결과(성취기준 원문·해설).
+    """curriculum_chunks 테이블 조회 결과(성취기준 원문·해설).
 
     app/lib/db.py는 E 소유이며 아직 빈 파일이라, app.lib.types에 기대지 않고
     lesson_generate 폴더 안에서 자체적으로(db_client.py) 조회하기 위해 이
