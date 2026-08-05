@@ -5,11 +5,16 @@ from app.lib.types import MappingResult, PipelineContext, Subject, ValidationRes
 # school_level은 입력값이 아니라 시스템 스코프(A2가 초등 학년군만 다룸)에 따른 고정값이다.
 SCHOOL_LEVEL = "초등학교"
 
-_SUBJECT_LABELS = {"MATH": "수학", "SCIENCE": "과학"}
+_SUBJECT_LABELS = {
+    "MATH": "수학",
+    "SCIENCE": "과학",
+    "DOMESTIC_SCIENCE": "실과",
+    "ART": "미술",
+}
 
 
 def subject_label(subject: Subject) -> str:
-    """B가 넘겨준 Subject(MATH/SCIENCE) enum을 한글 라벨로 변환한다."""
+    """B가 넘겨준 Subject(MATH/SCIENCE/DOMESTIC_SCIENCE/ART) enum을 한글 라벨로 변환한다."""
     key = getattr(subject, "value", subject)
     return _SUBJECT_LABELS.get(key, str(key))
 
