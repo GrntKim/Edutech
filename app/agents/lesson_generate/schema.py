@@ -169,7 +169,9 @@ class GeneratedLessonContent(BaseModel):
     materials: list[str] = Field(min_length=1)
     lesson_stages: LessonStages
     evaluation_criteria: EvaluationCriteria
-    worksheet: Worksheet
+    # 학생이 직접 손으로 채우거나 기록해야 하는 실습(카드 분류, 관찰 기록 등)이 있는
+    # 수업에서만 채우고, 필요 없는 수업(토론·구두 발표·게임 등)에서는 null로 둔다.
+    worksheet: Worksheet | None = None
 
 
 class LessonOutput(BaseModel):
@@ -189,4 +191,4 @@ class LessonOutput(BaseModel):
     materials: list[str]
     lesson_stages: LessonStages
     evaluation_criteria: EvaluationCriteria
-    worksheet: Worksheet
+    worksheet: Worksheet | None = None

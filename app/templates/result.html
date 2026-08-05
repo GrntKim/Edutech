@@ -12,10 +12,13 @@
         table.form { width: 97%; margin: 0 auto 1rem; border-collapse: collapse; }
         table.form th, table.form td { border: 1px solid #999; padding: 0.5rem 0.75rem; vertical-align: top; text-align: left; }
         table.form th { background: #f2f2f2; text-align: center; }
-        table.meta th { width: 11rem; white-space: nowrap; background: #D9E9F7; color: #000; }
+        table.meta th { width: 11rem; white-space: nowrap; background: #D4E0EC; color: #000; }
         table.form th.eval { background: #e3ecfa; }
-        table.form th.stage-header { background: #D9E9F7; color: #000; }
-        .stage-label { font-weight: bold; white-space: nowrap; text-align: center; background: #D9E9F7; color: #000; }
+        table.eval-table { width: 100%; border-collapse: collapse; }
+        table.eval-table th, table.eval-table td { border: 1px solid #999; padding: 0.3rem 0.5rem; text-align: left; }
+        table.eval-table th { background: #f2f2f2; text-align: center; width: 3rem; }
+        table.form th.stage-header { background: #D4E0EC; color: #000; }
+        .stage-label { font-weight: bold; white-space: nowrap; text-align: center; background: #D4E0EC; color: #000; }
         .content-label { font-weight: bold; white-space: nowrap; }
         .stage-time { font-weight: normal; color: #555; white-space: nowrap; text-align: center; }
         .tools-notes { font-size: 9pt; }
@@ -82,7 +85,7 @@
             </td>
         </tr>
         <tr>
-            <th>학습 준비물 및 활용 자료</th>
+            <th>학습 준비물 및<br>활용 자료</th>
             <td>{{ lesson.materials | join(", ") }}</td>
         </tr>
         <tr>
@@ -93,12 +96,12 @@
 
     <table class="form" style="table-layout: fixed;">
         <colgroup>
-            <col style="width: 9.7%;">
-            <col style="width: 10.6%;">
-            <col style="width: 28.1%;">
-            <col style="width: 28.1%;">
-            <col style="width: 7.4%;">
-            <col style="width: 16.1%;">
+            <col style="width: 9.5%;">
+            <col style="width: 12.5%;">
+            <col style="width: 27.5%;">
+            <col style="width: 27.5%;">
+            <col style="width: 7.2%;">
+            <col style="width: 15.8%;">
         </colgroup>
         <tr>
             <th class="stage-header" rowspan="2">학습 단계</th>
@@ -108,16 +111,21 @@
             <th class="stage-header tools-notes" rowspan="2">도구 및 자료(□) / 유의점(◆)</th>
         </tr>
         <tr>
-            <th class="stage-header">교사</th>
-            <th class="stage-header">학생</th>
+            <th class="stage-header">교사 활동</th>
+            <th class="stage-header">학생 활동</th>
         </tr>
+        {% set content_label_breaks = {
+            "전시학습 상기": "전시학습<br>상기",
+            "학습 문제 안내하기": "학습 문제<br>안내하기",
+            "학습 내용 정리": "학습 내용<br>정리",
+        } %}
         {% for stage_label, activities in [("도입", lesson.lesson_stages.intro), ("전개", lesson.lesson_stages.development), ("정리", lesson.lesson_stages.wrap_up)] %}
         {% for act in activities %}
         <tr>
             {% if loop.first %}
             <td class="stage-label" rowspan="{{ activities | length }}">{{ stage_label }}</td>
             {% endif %}
-            <td class="content-label">{{ act.content_label }}</td>
+            <td class="content-label">{{ content_label_breaks.get(act.content_label, act.content_label) | safe }}</td>
             {% if act.content_label == "학습 문제 안내하기" %}
             <td class="activity announce-cell" colspan="2">
                 <div class="announce-headers">
@@ -141,7 +149,13 @@
                 <div>{{ prompt_line }}</div>
                 {% endif %}
             </td>
-            <td class="activity">{{ act.student }}</td>
+            {% set student_lines = act.student.split("\n") %}
+            <td class="activity">
+                <div class="content-heading">{{ student_lines[0] }}</div>
+                {% if student_lines[1:] %}
+                <div>{{ student_lines[1:] | join("\n") }}</div>
+                {% endif %}
+            </td>
             {% else %}
             <td class="activity">{{ act.teacher }}</td>
             <td class="activity">{{ act.student }}</td>
@@ -165,13 +179,16 @@
         </tr>
         <tr>
             <td colspan="6">
-                <p><strong>상</strong> — {{ lesson.evaluation_criteria.high }}</p>
-                <p><strong>중</strong> — {{ lesson.evaluation_criteria.mid }}</p>
-                <p><strong>하</strong> — {{ lesson.evaluation_criteria.low }}</p>
+                <table class="eval-table">
+                    <tr><th>상</th><td>{{ lesson.evaluation_criteria.high }}</td></tr>
+                    <tr><th>중</th><td>{{ lesson.evaluation_criteria.mid }}</td></tr>
+                    <tr><th>하</th><td>{{ lesson.evaluation_criteria.low }}</td></tr>
+                </table>
             </td>
         </tr>
     </table>
 
+    {% if lesson.worksheet %}
     <h2>학생 활동지</h2>
     <div class="worksheet-sheet">
         <h3>{{ lesson.worksheet.icon }} {{ lesson.worksheet.title }}</h3>
@@ -216,5 +233,6 @@
             </ol>
         </div>
     </div>
+    {% endif %}
 </body>
 </html>

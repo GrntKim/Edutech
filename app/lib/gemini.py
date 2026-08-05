@@ -260,3 +260,79 @@ def generate_text(
         max_retries=max_retries,
         prompt_version=prompt_version,
     )
+
+
+# 이미지 생성 모델은 무료 등급 쿼터가 0이라 결제 연결된 프로젝트에서만 동작 확인됨
+# (2026-08-04 실측: 429 limit=0). Imagen 전용 generate_images()는 SDK가 deprecated
+# 처리해 generate_content로 이미지 모델을 호출하는 방식을 쓴다. C(lesson_generate)
+# 요청으로 결제 연결 확인 후 예시 삼아 한 번 추가함 — E와 정식 인터페이스 협의 필요.
+DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image"
+
+
+def generate_image(
+    prompt: str,
+    *,
+    model: str = DEFAULT_IMAGE_MODEL,
+    timeout_s: float = 60.0,
+    max_retries: int = 2,
+    prompt_version: str | None = None,
+) -> bytes:
+    """이미지를 생성해 원본 바이트(PNG/JPEG)를 반환한다. 텍스트 응답만 오거나 안전
+    필터에 막히면 GeminiError를 올린다. 재시도 정책은 generate_structured/
+    generate_text와 동일하게 API 레벨 실패만 재시도한다."""
+    client = _get_client()
+    config = types.GenerateContentConfig(
+        http_options=types.HttpOptions(timeout=int(timeout_s * 1000)),
+    )
+
+    last_error: GeminiError | None = None
+    for attempt in range(max_retries + 1):
+        start = time.monotonic()
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config,
+            )
+        except Exception as exc:
+            elapsed_ms = (time.monotonic() - start) * 1000
+            last_error = _classify(exc)
+            logger.warning(
+                f"gemini_image_call_failed model={model} elapsed_ms={elapsed_ms:.1f} "
+                f"retry_count={attempt} error={last_error}",
+                extra={
+                    "model": model,
+                    "elapsed_ms": round(elapsed_ms, 1),
+                    "retry_count": attempt,
+                    "prompt_version": prompt_version,
+                    "error": str(last_error),
+                },
+            )
+            if attempt < max_retries:
+                time.sleep(_backoff_seconds(last_error, attempt))
+            continue
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+        candidates = getattr(response, "candidates", None) or []
+        for candidate in candidates:
+            parts = getattr(candidate.content, "parts", None) or []
+            for part in parts:
+                inline_data = getattr(part, "inline_data", None)
+                if inline_data is not None and inline_data.data:
+                    logger.info(
+                        f"gemini_image_call_success model={model} elapsed_ms={elapsed_ms:.1f} "
+                        f"retry_count={attempt}",
+                        extra={
+                            "model": model,
+                            "elapsed_ms": round(elapsed_ms, 1),
+                            "retry_count": attempt,
+                            "prompt_version": prompt_version,
+                        },
+                    )
+                    return inline_data.data
+        raise GeminiError(
+            f"Gemini가 이미지를 반환하지 않았습니다(텍스트만 응답했거나 안전 필터 차단): {candidates}"
+        )
+
+    assert last_error is not None
+    raise last_error
