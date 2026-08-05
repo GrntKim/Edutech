@@ -6,3 +6,6 @@ __pycache__/
 app/data/raw/
 app/data/embeddings_cache/
 .DS_Store
+
+# 개인 의사결정 기록 — 팀 공유 안 함
+curriculum-search-engine/RS-006_검색구조_의사결정_기록.md
