@@ -13,7 +13,23 @@ from lib.gemini import GeminiError, generate_structured
 from .prompts import build_rerank_prompt
 from .schema import GRADE_TO_BANDS, CurriculumChunk, GradeBand, SearchQuery, SearchResult
 
-EMBEDDING_MODEL = "jhgan/ko-sroberta-multitask"
+# ko-sroberta-multitask를 §8.8에서 "최종 확정"했으나, 그 결정은 당시 리랭커(lite 모델
+# 대체 상태)를 기준으로 한 것이었다. 리랭커를 gemini-3.6-flash로 정정한 뒤(§9.12) 4개
+# 모델을 다시 end-to-end 실측(§9.18)한 결과 KoE5가 Recall 78.57%→83.33%(+4.76%p)로
+# 가장 높고 지연도 비슷해(3.10s) 교체 — RS-006 §9.18 참고.
+EMBEDDING_MODEL = "nlpai-lab/KoE5"
+
+# E5 계열(KoE5, multilingual-e5-large)은 query:/passage: 프리픽스를 안 붙이면 성능이
+# 크게 떨어진다고 알려져 있다(cache_embeddings.py에서도 동일하게 처리). 이 딕셔너리에
+# 없는 모델(예: ko-sroberta-multitask, bge-m3)은 프리픽스 없이 원문 그대로 인코딩한다.
+_QUERY_PREFIX = {
+    "nlpai-lab/KoE5": "query: ",
+    "intfloat/multilingual-e5-large": "query: ",
+}
+_PASSAGE_PREFIX = {
+    "nlpai-lab/KoE5": "passage: ",
+    "intfloat/multilingual-e5-large": "passage: ",
+}
 # 팀 표준 모델로 gemini-3.6-flash 고정(alias인 "-latest"는 예고 없이 세대가 바뀌어
 # NFR-001-6 재현성 요구와 충돌하므로 사용하지 않는다). Gemini 호출은 전부
 # app/lib/gemini.py의 generate_structured() 경유(팀 규약 — google.genai 직접 호출 금지).
@@ -98,10 +114,14 @@ def _get_model() -> SentenceTransformer:
     return _model
 
 
-async def embed_text(text: str) -> list[float]:
+async def embed_text(text: str, *, is_query: bool = False) -> list[float]:
+    """is_query=False(기본)면 passage 프리픽스를 적용한다 — ingest_curriculum.py의
+    embed_chunks()는 청크(passage) 임베딩이라 기본값을 그대로 쓴다. 질의 임베딩은
+    search_within_chunks()에서 is_query=True로 명시적으로 호출한다."""
+    prefix = (_QUERY_PREFIX if is_query else _PASSAGE_PREFIX).get(EMBEDDING_MODEL, "")
     try:
         model = await asyncio.to_thread(_get_model)
-        embedding = await asyncio.to_thread(model.encode, text)
+        embedding = await asyncio.to_thread(model.encode, prefix + text)
     except Exception as exc:
         raise CurriculumSearchError(f"임베딩 생성 실패: {exc}") from exc
     return embedding.tolist()
@@ -199,12 +219,22 @@ async def _llm_rerank(query: SearchQuery, candidates: list[CurriculumChunk], top
         raise CurriculumSearchError(f"LLM 리랭킹 실패: {exc}") from exc
 
 
+def _db_kwargs() -> dict:
+    return {
+        "dbname": os.environ["DB_NAME"],
+        "user": os.environ["DB_USER"],
+        "password": os.environ["DB_PASSWORD"],
+        "host": os.environ["DB_HOST"],
+        "port": os.environ["DB_PORT"],
+    }
+
+
 async def hybrid_search(query: SearchQuery) -> list[SearchResult]:
     grade_bands = resolve_grade_bands(query.target_grade)
 
     params = {"grade_bands": [band.value for band in grade_bands]}
     try:
-        async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"]) as conn:
+        async with await psycopg.AsyncConnection.connect(**_db_kwargs()) as conn:
             await register_vector_async(conn)
             async with conn.cursor() as cur:
                 await cur.execute(_FETCH_BAND_SQL, params)
@@ -233,7 +263,7 @@ async def search_within_chunks(
     if not chunks:
         return []
 
-    query_embedding = await embed_text(query.concept_definition)
+    query_embedding = await embed_text(query.concept_definition, is_query=True)
     dense_scores = _cosine_similarities(query_embedding, embeddings)
     chunk_texts = [embedding_source_text(chunk) for chunk in chunks]
     query_text = f"{query.concept_name} {query.concept_definition}"
