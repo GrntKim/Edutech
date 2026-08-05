@@ -2,7 +2,6 @@ import asyncio
 import os
 import re
 
-import google.generativeai as genai
 import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector_async
@@ -10,13 +9,23 @@ from pydantic import BaseModel
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
+from lib.gemini import GeminiError, generate_structured
 from .prompts import build_rerank_prompt
 from .schema import GRADE_TO_BANDS, CurriculumChunk, GradeBand, SearchQuery, SearchResult
 
 EMBEDDING_MODEL = "jhgan/ko-sroberta-multitask"
-# "gemini-2.5-flash" 고정 버전은 신규 발급 API 키에서 404로 막혀있어(2026-08 기준),
-# 모델 세대가 바뀌어도 계속 최신 flash 모델을 가리키는 alias를 사용한다.
-RERANK_MODEL = "gemini-flash-latest"
+# 팀 표준 모델로 gemini-3.6-flash 고정(alias인 "-latest"는 예고 없이 세대가 바뀌어
+# NFR-001-6 재현성 요구와 충돌하므로 사용하지 않는다). Gemini 호출은 전부
+# app/lib/gemini.py의 generate_structured() 경유(팀 규약 — google.genai 직접 호출 금지).
+RERANK_MODEL = "gemini-3.6-flash"
+
+# gemini-3.6-flash부터 temperature/top_p/top_k가 deprecated되어 무시되고, 대신
+# thinking_level(minimal/low/medium/high)로 추론량을 조절한다. 기본값 medium은 지연이 커서
+# (실측: 42행 전량 리랭킹 시 평균 6.59s, NFR-002-1의 2초를 42/42 위반, 2026-08-04, 단
+# 이 실측은 alias 모델+thinking_budget 기준이라 잠정치) NFR-002-1(2초) 목표를 위해 low로
+# 명시한다. thinking_level은 추론 "강도"이지 temperature처럼 무작위성을 제어하지는 않는다 —
+# 리랭킹 비결정성 자체는 여전히 남음(§4 리스크 "LLM 리랭킹의 비결정성" 참고).
+RERANK_THINKING_LEVEL = "low"
 
 # grade_band 필터만으로는 최대 262개 청크가 그대로 통과한다(GRADE_TO_BANDS가 누적 구조라
 # 5~6학년 질의는 전체 코퍼스와 동일). 청크 하나당 평균 900자 안팎이라 전부 LLM에 넘기면
@@ -30,6 +39,23 @@ RERANK_MODEL = "gemini-flash-latest"
 # 하면 안 되고, LLM-in-the-loop 실측이 필요하다는 교훈. 상세: RS-006 §8.7.
 CANDIDATE_POOL_SIZE = 20
 RRF_K = 60
+
+# grade_band 누적 구조 때문에 target_grade 5~6 질의는 필터링 효과가 거의 없어(§RS-006 9.5)
+# 코퍼스 전체가 무차별 후보가 된다. G1_2 청크와 G5_6 청크가 RRF 융합에서 동등하게 취급되는 걸
+# 막기 위해, 질의의 "본 학년군"(target_grade가 실제로 속한 밴드)과 청크 자신의 grade_band가
+# 몇 단계 떨어져 있는지에 따라 융합 스코어에 가중치를 곱한다.
+# 팀 제안값(1.0/0.6/0.3)을 포함해 4세트를 골든셋 42행 end-to-end로 스윕 실측한 결과
+# (sweep_grade_weights.py, §RS-006 9.8), 1.0/0.8/0.6(완만한 페널티)이 Recall 64.29%로 최고 —
+# 더 세게 누른 1.0/0.4/0.15(57.14%)보다도 낮은 페널티가 더 나았다. 골든셋 정답 중 하위
+# 학년군(G3_4) 청크가 실제 정답인 경우가 꽤 있어, 페널티가 강할수록 그 진짜 정답까지
+# 같이 밀어내는 역효과가 더 컸던 것으로 보인다("세게 누를수록 좋다"는 가정은 틀렸음).
+_GRADE_BAND_ORDER = [GradeBand.G1_2, GradeBand.G3_4, GradeBand.G5_6]
+_GRADE_DISTANCE_WEIGHT = {0: 1.0, 1: 0.8, 2: 0.6}
+
+
+def _grade_band_weight(chunk_band: GradeBand, query_band: GradeBand) -> float:
+    distance = _GRADE_BAND_ORDER.index(query_band) - _GRADE_BAND_ORDER.index(chunk_band)
+    return _GRADE_DISTANCE_WEIGHT.get(distance, _GRADE_DISTANCE_WEIGHT[2])
 
 _model: SentenceTransformer | None = None
 
@@ -153,25 +179,23 @@ def _reciprocal_rank_fusion(*score_lists: list[float], k: int = RRF_K) -> list[f
     return fused
 
 
-def _get_gemini_model() -> genai.GenerativeModel:
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    return genai.GenerativeModel(RERANK_MODEL)
-
-
 async def _llm_rerank(query: SearchQuery, candidates: list[CurriculumChunk], top_k: int) -> _RerankResponse:
     prompt = build_rerank_prompt(query, candidates, top_k)
     try:
-        model = await asyncio.to_thread(_get_gemini_model)
-        response = await asyncio.to_thread(
-            model.generate_content,
+        # generate_structured()가 API 레벨 실패(타임아웃/429/5xx) 재시도를 자체적으로 수행하는
+        # 유일한 재시도 계층이다(app/lib/gemini.py 모듈 docstring 참고) — 이 함수 바깥에서
+        # 다시 재시도를 걸면 이중 재시도로 지연 예산이 무너지므로 여기서는 추가하지 않는다.
+        # 타임아웃 미설정 시 네트워크 hang이 예외 없이 무한 대기로 이어지는 걸 실측으로 확인함
+        # (2026-08-04, sweep_grade_weights.py 1행에서 3분+ 무응답) — 60초로 명시.
+        return await asyncio.to_thread(
+            generate_structured,
             prompt,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=_RerankResponse,
-            ),
+            _RerankResponse,
+            model=RERANK_MODEL,
+            thinking_level=RERANK_THINKING_LEVEL,
+            timeout_s=60.0,
         )
-        return _RerankResponse.model_validate_json(response.text)
-    except Exception as exc:
+    except GeminiError as exc:
         raise CurriculumSearchError(f"LLM 리랭킹 실패: {exc}") from exc
 
 
@@ -216,8 +240,13 @@ async def search_within_chunks(
     sparse_scores = _sparse_scores(query_text, chunk_texts)
 
     fused_scores = _reciprocal_rank_fusion(dense_scores, sparse_scores)
+    query_band = resolve_grade_bands(query.target_grade)[-1]
+    weighted_scores = [
+        score * _grade_band_weight(chunk.grade_band, query_band)
+        for chunk, score in zip(chunks, fused_scores)
+    ]
     pool_size = min(CANDIDATE_POOL_SIZE, len(chunks))
-    top_indices = sorted(range(len(chunks)), key=lambda i: fused_scores[i], reverse=True)[:pool_size]
+    top_indices = sorted(range(len(chunks)), key=lambda i: weighted_scores[i], reverse=True)[:pool_size]
 
     candidates = [chunks[i] for i in top_indices]
     dense_by_chunk_id = {chunks[i].chunk_id: dense_scores[i] for i in top_indices}
