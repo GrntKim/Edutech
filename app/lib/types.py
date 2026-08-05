@@ -42,7 +42,7 @@ class CurriculumChunk(BaseModel):
 class SearchQuery(BaseModel):
     concept_name: str
     concept_definition: str
-    target_grade: int
+    target_grade: int = Field(ge=1, le=6)
     top_k: int = 15
 
 
@@ -63,26 +63,6 @@ def grade_to_bands(target_grade: int) -> set[GradeBand]:
 
 
 # 소유: A1(REQ-001)
-class ConceptCategory(str, Enum):
-    CLASSIFICATION = "CLASSIFICATION"
-    PREDICTION = "PREDICTION"
-    PATTERN_RECOGNITION = "PATTERN_RECOGNITION"
-    CLUSTERING = "CLUSTERING"
-    GENERATION = "GENERATION"
-    RECOMMENDATION = "RECOMMENDATION"
-
-
-ACTIVE_CATEGORIES: frozenset[ConceptCategory] = frozenset(
-    {
-        ConceptCategory.CLASSIFICATION,
-        ConceptCategory.PREDICTION,
-        ConceptCategory.PATTERN_RECOGNITION,
-        ConceptCategory.CLUSTERING,
-    }
-)
-
-
-# 소유: A1(REQ-001)
 class ConceptInput(BaseModel):
     raw_concept_name: str
     target_grade: int = Field(ge=1, le=6)
@@ -91,8 +71,14 @@ class ConceptInput(BaseModel):
 
 # 소유: A1(REQ-001)
 class StructuredConcept(BaseModel):
+    # is_ai_concept=False: 입력이 AI 개념으로 인식 안 됨(예: "김치찌개").
+    # A1이 ConceptCollectResult.status="unsupported_concept"로 반환하는 근거.
+    # False인 경우 나머지 필드는 신뢰하지 않는다 — 모델이 형식상 채워도 환각이므로
+    # 소비자(A2·B·C·D)는 사용 금지.
+    # 파이프라인 분기는 이 필드가 아니라 ConceptCollectResult.status로 판단한다
+    # (status가 오케스트레이터의 공식 계약).
+    is_ai_concept: bool
     concept_name: str
-    category: ConceptCategory
     one_line_definition: str
     core_mechanism: str
     key_operations: list[str]

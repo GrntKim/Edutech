@@ -155,4 +155,4 @@ FAIL 항목:
 1. `.env`의 접속 정보를 로그나 출력에 노출하지 않는다
 2. Gemini API 호출이 반복되는 eval(rubric) 테스트는 비용이 발생하므로, 로컬 반복 실행 시 캐시된 응답을 우선 사용하고 필요할 때만 실제 호출한다
 3. Cloud SQL 연결 실패 시 재시도 없이 즉시 Orchestrator에 보고한다
-4. 골든셋은 브랜치별로 관리 위치가 다르다 — A2는 `curriculum-search-engine/RS-005_골든셋_라벨링_보정.csv`(고정 CSV), A1/B/C는 `tests/fixtures/`(각 모듈 rubric eval fixture)를 사용한다. 실행마다 값이 바뀌지 않게 한다
+4. 골든셋은 브랜치별로 관리 위치가 다르다 — A2는 `curriculum-search-engine/RS-005_골든셋.csv`(최종본, 42행, 고정 CSV), A1/B/C는 `tests/fixtures/`(각 모듈 rubric eval fixture)를 사용한다. 실행마다 값이 바뀌지 않게 한다
