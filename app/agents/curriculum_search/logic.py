@@ -6,8 +6,8 @@ from pydantic import BaseModel
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
-from lib.db import DatabaseError, get_connection
-from lib.gemini import GeminiError, generate_structured
+from app.lib.db import DatabaseError, get_connection
+from app.lib.gemini import GeminiError, generate_structured
 from .prompts import build_rerank_prompt
 from .schema import GRADE_TO_BANDS, CurriculumChunk, GradeBand, SearchQuery, SearchResult
 

@@ -9,11 +9,12 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 APP_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(APP_ROOT))
+PROJECT_ROOT = APP_ROOT.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from agents.curriculum_search.logic import embed_text, embedding_source_text  # noqa: E402
-from agents.curriculum_search.schema import CurriculumChunk, GradeBand, Subject  # noqa: E402
-from lib.db import DatabaseError, get_connection  # noqa: E402
+from app.agents.curriculum_search.logic import embed_text, embedding_source_text  # noqa: E402
+from app.agents.curriculum_search.schema import CurriculumChunk, GradeBand, Subject  # noqa: E402
+from app.lib.db import DatabaseError, get_connection  # noqa: E402
 
 RAW_DIR = APP_ROOT / "data" / "raw"
 OUTPUT_PATH = APP_ROOT / "data" / "curriculum_units.json"
