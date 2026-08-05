@@ -1,5 +1,4 @@
 from app.agents.lesson_generate.db_client import fetch_achievement_standard
-from app.agents.lesson_generate.gemini_client import generate_json
 from app.agents.lesson_generate.prompts import (
     SYSTEM_INSTRUCTION,
     build_generation_prompt,
@@ -8,11 +7,11 @@ from app.agents.lesson_generate.schema import (
     SCHOOL_LEVEL,
     GeneratedLessonContent,
     LessonOutput,
-    ValidationResult,
     build_lesson_input,
     subject_label,
 )
-from app.lib.types import MappingResult, PipelineContext
+from app.lib.gemini import generate_structured
+from app.lib.types import MappingResult, PipelineContext, ValidationResult
 
 
 def generate_lesson(
@@ -33,12 +32,21 @@ def generate_lesson(
     """
     lesson_input = build_lesson_input(mapping_result, context, retry_feedback)
     standard = fetch_achievement_standard(lesson_input.achievement_code)
-    prompt = build_generation_prompt(lesson_input, standard)
+    prompt = f"{SYSTEM_INSTRUCTION}\n\n{build_generation_prompt(lesson_input, standard)}"
 
-    content: GeneratedLessonContent = generate_json(
-        system_instruction=SYSTEM_INSTRUCTION,
+    # app/lib/gemini.py(E 소유)의 team 규약: 모든 에이전트는 이 모듈을 경유해서만
+    # Gemini를 호출한다(google.genai 직접 import 금지). system_instruction을 별도로
+    # 받지 않는 시그니처라 위에서 프롬프트에 직접 합쳤다.
+    content: GeneratedLessonContent = generate_structured(
         prompt=prompt,
-        response_model=GeneratedLessonContent,
+        response_schema=GeneratedLessonContent,
+        prompt_version="lesson_generate-v1",
+        # LessonOutput은 필드가 많고 중첩 구조(단계별 행, 활동지 섹션)라 low 기본값으로는
+        # 활동2처럼 뒤쪽 필드가 통째로 누락되는 경우가 있어 한 단계 올린다.
+        thinking_level="medium",
+        # thinking_level=medium은 low보다 생성이 오래 걸려 기본 30초 타임아웃으로는
+        # 504 DEADLINE_EXCEEDED가 실제로 발생함을 확인했다(2026-08-04 실측).
+        timeout_s=90.0,
     )
 
     return LessonOutput(
@@ -48,6 +56,7 @@ def generate_lesson(
         topic=content.topic,
         subject=subject_label(lesson_input.subject),
         achievement_code=lesson_input.achievement_code,
+        ai_digital_tool=content.ai_digital_tool,
         learning_objectives=content.learning_objectives,
         materials=content.materials,
         lesson_stages=content.lesson_stages,
