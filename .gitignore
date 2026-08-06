@@ -2,6 +2,11 @@
 __pycache__/
 *.pyc
 .env
+*.pem
+*.key
+credentials.json
+service-account*.json
+.claude/settings.local.json
 *.log
 app/data/raw/
 app/data/embeddings_cache/
