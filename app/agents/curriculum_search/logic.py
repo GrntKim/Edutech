@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 import threading
 
@@ -11,6 +12,8 @@ from app.lib.db import DatabaseError, get_connection
 from app.lib.gemini import GeminiError, generate_structured
 from .prompts import build_rerank_prompt
 from .schema import GRADE_TO_BANDS, CurriculumChunk, GradeBand, SearchQuery, SearchResult
+
+logger = logging.getLogger(__name__)
 
 # ko-sroberta-multitask를 §8.8에서 "최종 확정"했으나, 그 결정은 당시 리랭커(lite 모델
 # 대체 상태)를 기준으로 한 것이었다. 리랭커를 gemini-3.6-flash로 정정한 뒤(§9.12) 4개
@@ -159,6 +162,17 @@ async def embed_texts(texts: list[str], *, is_query: bool = False) -> list[list[
     return [embedding.tolist() for embedding in embeddings]
 
 
+def _embed_text_sync(text: str, *, is_query: bool = False) -> list[float]:
+    """embed_text의 동기 버전 — search_curriculum()의 동기 코어가 쓴다."""
+    prefix = (_QUERY_PREFIX if is_query else _PASSAGE_PREFIX).get(EMBEDDING_MODEL, "")
+    try:
+        model = _get_model()
+        embedding = model.encode(prefix + text)
+    except Exception as exc:
+        raise CurriculumSearchError(f"임베딩 생성 실패: {exc}") from exc
+    return embedding.tolist()
+
+
 def embedding_source_text(chunk: CurriculumChunk) -> str:
     return f"{chunk.unit_name} {chunk.core_idea} {chunk.achievement_text} {chunk.explanation}".strip()
 
@@ -231,29 +245,39 @@ def _reciprocal_rank_fusion(*score_lists: list[float], k: int = RRF_K) -> list[f
     return fused
 
 
-async def _llm_rerank(query: SearchQuery, candidates: list[CurriculumChunk], top_k: int) -> _RerankResponse:
+# generate_structured()가 API 레벨 실패(타임아웃/429/5xx) 재시도를 자체적으로 수행하는
+# 유일한 재시도 계층이다(app/lib/gemini.py 모듈 docstring 참고) — 이 함수 바깥에서
+# 다시 재시도를 걸면 이중 재시도로 지연 예산이 무너지므로 여기서는 추가하지 않는다.
+# 타임아웃 미설정 시 네트워크 hang이 예외 없이 무한 대기로 이어지는 걸 실측으로 확인함
+# (2026-08-04, sweep_grade_weights.py 1행에서 3분+ 무응답) — 60초로 명시.
+#
+# GeminiError는 CurriculumSearchError로 다시 감싸지 않고 그대로 올린다 — 오케스트레이터의
+# 전역 예외 핸들러가 (GeminiError, DatabaseError)를 잡는데, CurriculumSearchError(RuntimeError
+# 직속)로 감싸면 이 핸들러를 못 타고 500으로 새어나간다(D 요청, orchestrate.py 통합 이슈).
+def _llm_rerank_sync(query: SearchQuery, candidates: list[CurriculumChunk], top_k: int) -> _RerankResponse:
     prompt = build_rerank_prompt(query, candidates, top_k)
     try:
-        # generate_structured()가 API 레벨 실패(타임아웃/429/5xx) 재시도를 자체적으로 수행하는
-        # 유일한 재시도 계층이다(app/lib/gemini.py 모듈 docstring 참고) — 이 함수 바깥에서
-        # 다시 재시도를 걸면 이중 재시도로 지연 예산이 무너지므로 여기서는 추가하지 않는다.
-        # 타임아웃 미설정 시 네트워크 hang이 예외 없이 무한 대기로 이어지는 걸 실측으로 확인함
-        # (2026-08-04, sweep_grade_weights.py 1행에서 3분+ 무응답) — 60초로 명시.
-        return await asyncio.to_thread(
-            generate_structured,
+        return generate_structured(
             prompt,
             _RerankResponse,
             model=RERANK_MODEL,
             thinking_level=RERANK_THINKING_LEVEL,
             timeout_s=60.0,
         )
-    except GeminiError as exc:
-        raise CurriculumSearchError(f"LLM 리랭킹 실패: {exc}") from exc
+    except GeminiError:
+        logger.warning(f"llm_rerank_failed concept_name={query.concept_name!r}")
+        raise
+
+
+async def _llm_rerank(query: SearchQuery, candidates: list[CurriculumChunk], top_k: int) -> _RerankResponse:
+    return await asyncio.to_thread(_llm_rerank_sync, query, candidates, top_k)
 
 
 def _fetch_band_rows(grade_bands: list[GradeBand]) -> list[tuple]:
-    """lib.db.get_connection()은 동기 함수라(팀 공용 계층, psycopg 직접 import 금지 —
-    REQ-006 NFR-006-4), 블로킹 호출을 asyncio.to_thread로 감싸 쓴다. embedding 컬럼은
+    """lib.db.get_connection()은 동기 함수다(팀 공용 계층, psycopg 직접 import 금지 —
+    REQ-006 NFR-006-4). 이 함수 자체는 동기이고, search_curriculum()의 동기 코어에서
+    직접 호출된다 — async 호출자(hybrid_search)는 search_curriculum 전체를
+    asyncio.to_thread로 감싸는 바깥쪽 한 겹으로 블로킹을 처리한다. embedding 컬럼은
     lib.db의 공용 조회 함수(get_chunks_by_scope 등)에 일부러 없음(CurriculumChunk에
     embedding 필드가 없어서) — 벡터가 필요한 A2는 get_connection()으로 직접 커서를 얻어
     자체 SQL(_FETCH_BAND_SQL)을 쓴다(lib/db.py docstring에 이 용례가 명시되어 있음).
@@ -265,36 +289,14 @@ def _fetch_band_rows(grade_bands: list[GradeBand]) -> list[tuple]:
             return cur.fetchall()
 
 
-async def hybrid_search(query: SearchQuery) -> list[SearchResult]:
-    grade_bands = resolve_grade_bands(query.target_grade)
-
-    try:
-        rows = await asyncio.to_thread(_fetch_band_rows, grade_bands)
-    except DatabaseError as exc:
-        raise CurriculumSearchError(f"Cloud SQL 연결 실패: {exc}") from exc
-
-    if not rows:
-        return []
-
-    chunks: list[CurriculumChunk] = []
-    embeddings: list[np.ndarray] = []
-    for row in rows:
-        chunk, embedding = _row_to_chunk(row)
-        chunks.append(chunk)
-        embeddings.append(embedding)
-
-    return await search_within_chunks(query, chunks, embeddings)
-
-
-async def search_within_chunks(
-    query: SearchQuery, chunks: list[CurriculumChunk], embeddings: list[np.ndarray]
-) -> list[SearchResult]:
-    """DB에서 이미 가져온(또는 로컬 캐시에서 불러온) chunks/embeddings에 대해
-    dense+sparse RRF 융합과 LLM 리랭킹을 수행한다. DB 연결이 없는 오프라인 평가에서 재사용한다."""
-    if not chunks:
-        return []
-
-    query_embedding = await embed_text(query.concept_definition, is_query=True)
+def _rank_candidates(
+    query: SearchQuery,
+    chunks: list[CurriculumChunk],
+    embeddings: list[np.ndarray],
+    query_embedding: list[float],
+) -> tuple[list[CurriculumChunk], dict[str, float]]:
+    """dense+sparse+RRF+학년 가중치까지의 순수 계산(I/O 없음). sync/async 양쪽
+    (search_within_chunks / search_within_chunks_sync)이 공유한다."""
     dense_scores = _cosine_similarities(query_embedding, embeddings)
     chunk_texts = [embedding_source_text(chunk) for chunk in chunks]
     query_text = f"{query.concept_name} {query.concept_definition}"
@@ -311,14 +313,20 @@ async def search_within_chunks(
 
     candidates = [chunks[i] for i in top_indices]
     dense_by_chunk_id = {chunks[i].chunk_id: dense_scores[i] for i in top_indices}
+    return candidates, dense_by_chunk_id
+
+
+def _assemble_results(
+    rerank: _RerankResponse,
+    candidates: list[CurriculumChunk],
+    dense_by_chunk_id: dict[str, float],
+    top_k: int,
+) -> list[SearchResult]:
     candidate_by_id = {chunk.chunk_id: chunk for chunk in candidates}
-
-    rerank = await _llm_rerank(query, candidates, query.top_k)
-
     valid_matches = [match for match in rerank.matches if match.chunk_id in candidate_by_id]
 
     results: list[SearchResult] = []
-    for rank, match in enumerate(valid_matches[: query.top_k], start=1):
+    for rank, match in enumerate(valid_matches[:top_k], start=1):
         chunk = candidate_by_id[match.chunk_id]
         results.append(
             SearchResult(
@@ -329,3 +337,69 @@ async def search_within_chunks(
             )
         )
     return results
+
+
+def _rows_to_chunks(rows: list[tuple]) -> tuple[list[CurriculumChunk], list[np.ndarray]]:
+    chunks: list[CurriculumChunk] = []
+    embeddings: list[np.ndarray] = []
+    for row in rows:
+        chunk, embedding = _row_to_chunk(row)
+        chunks.append(chunk)
+        embeddings.append(embedding)
+    return chunks, embeddings
+
+
+def search_within_chunks_sync(
+    query: SearchQuery, chunks: list[CurriculumChunk], embeddings: list[np.ndarray]
+) -> list[SearchResult]:
+    """search_within_chunks의 동기 버전. search_curriculum()의 동기 코어가 쓴다."""
+    if not chunks:
+        return []
+    query_embedding = _embed_text_sync(query.concept_definition, is_query=True)
+    candidates, dense_by_chunk_id = _rank_candidates(query, chunks, embeddings, query_embedding)
+    rerank = _llm_rerank_sync(query, candidates, query.top_k)
+    return _assemble_results(rerank, candidates, dense_by_chunk_id, query.top_k)
+
+
+async def search_within_chunks(
+    query: SearchQuery, chunks: list[CurriculumChunk], embeddings: list[np.ndarray]
+) -> list[SearchResult]:
+    """DB에서 이미 가져온(또는 로컬 캐시에서 불러온) chunks/embeddings에 대해
+    dense+sparse RRF 융합과 LLM 리랭킹을 수행한다. DB 연결이 없는 오프라인 평가(eval
+    스크립트)에서 재사용하므로, 이 이름·시그니처·async는 그대로 유지한다."""
+    if not chunks:
+        return []
+    query_embedding = await embed_text(query.concept_definition, is_query=True)
+    candidates, dense_by_chunk_id = _rank_candidates(query, chunks, embeddings, query_embedding)
+    rerank = await _llm_rerank(query, candidates, query.top_k)
+    return _assemble_results(rerank, candidates, dense_by_chunk_id, query.top_k)
+
+
+# DatabaseError는 CurriculumSearchError로 다시 감싸지 않고 그대로 올린다 — 이유는
+# _llm_rerank_sync 위 주석과 동일(오케스트레이터의 (GeminiError, DatabaseError) 전역
+# 핸들러가 CurriculumSearchError는 못 잡는다, D 요청, orchestrate.py 통합 이슈).
+def search_curriculum(query: SearchQuery) -> list[SearchResult]:
+    """동기 진입점. hybrid_search 안의 to_thread 호출이 전부 블로킹 작업(모델 인코딩,
+    DB 커서, Gemini 호출)을 스레드로 넘기는 용도일 뿐 실제 동시성(gather/create_task)이
+    없어서, 동기 호출자(오케스트레이터의 run_pipeline 등)는 이걸 직접 쓰는 게 이벤트 루프
+    생성 왕복 오버헤드가 없다(D 요청, orchestrate.py 통합 이슈)."""
+    grade_bands = resolve_grade_bands(query.target_grade)
+
+    try:
+        rows = _fetch_band_rows(grade_bands)
+    except DatabaseError:
+        logger.warning(f"curriculum_search_db_failed target_grade={query.target_grade}")
+        raise
+
+    if not rows:
+        return []
+
+    chunks, embeddings = _rows_to_chunks(rows)
+    return search_within_chunks_sync(query, chunks, embeddings)
+
+
+async def hybrid_search(query: SearchQuery) -> list[SearchResult]:
+    """기존 async 호출자 호환용 래퍼. 실제 작업은 동기 코어(search_curriculum)에서
+    수행하고, 여기서는 asyncio.to_thread로 감싸기만 한다(D 요청, orchestrate.py 통합
+    이슈 — 자세한 배경은 search_curriculum() docstring 참고)."""
+    return await asyncio.to_thread(search_curriculum, query)
