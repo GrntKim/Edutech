@@ -277,6 +277,113 @@ def test_validation_exhausts_retries(monkeypatch):
     assert result.lesson_plan == {"attempt": orchestrate.MAX_RETRIES + 1}
 
 
+def test_validation_diverges_stops_before_max_retries(monkeypatch):
+    """재시도마다 위반이 완전히 다르면 2회차에서 중단 — C가 MAX_RETRIES+1번 호출되지 않는다."""
+    concept_result = _make_concept_result()
+    search_results = _make_search_results()
+    mapping = _make_mapping()
+    call_count = {"c": 0, "d": 0}
+
+    validation_queue = [
+        ValidationResult(passed=False, violations=["만들어"], retry_feedback="a"),
+        ValidationResult(passed=False, violations=["모서리"], retry_feedback="b"),  # 완전히 다른 위반
+    ]
+
+    def fake_generate_lesson(m, ctx, retry_feedback=None):
+        call_count["c"] += 1
+        return {"attempt": call_count["c"]}
+
+    def fake_validate(lp, ctx, *, subject, caution_terms):
+        call_count["d"] += 1
+        return validation_queue.pop(0)
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
+    monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
+    monkeypatch.setattr(orchestrate, "validate", fake_validate)
+
+    result = orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None)
+    )
+
+    assert call_count["c"] == 2  # MAX_RETRIES + 1(=4)까지 가지 않음
+    assert call_count["d"] == 2
+    assert result.warning == orchestrate.MSG_VALIDATION_DIVERGED
+    assert result.validation.violations == ["모서리"]
+
+
+def test_validation_partial_overlap_continues(monkeypatch):
+    """위반이 부분적으로 겹치면(개선 중) 중단하지 않고 계속 진행한다."""
+    concept_result = _make_concept_result()
+    search_results = _make_search_results()
+    mapping = _make_mapping()
+    call_count = {"c": 0}
+
+    validation_queue = [
+        ValidationResult(passed=False, violations=["a", "b"], retry_feedback="x"),
+        ValidationResult(passed=False, violations=["b", "c"], retry_feedback="y"),  # "b" 겹침
+        ValidationResult(passed=True),
+    ]
+
+    def fake_generate_lesson(m, ctx, retry_feedback=None):
+        call_count["c"] += 1
+        return {"attempt": call_count["c"]}
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
+    monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
+    monkeypatch.setattr(
+        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms: validation_queue.pop(0)
+    )
+
+    result = orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None)
+    )
+
+    assert call_count["c"] == 3  # 중단 없이 세 번째(통과)까지 진행
+    assert result.warning is None
+    assert result.validation.passed is True
+
+
+def test_first_validation_failure_alone_does_not_trigger_divergence(monkeypatch):
+    """첫 검증(previous_violations 없음)에서는 수렴 판정을 하지 않고 정상 재시도한다."""
+    concept_result = _make_concept_result()
+    search_results = _make_search_results()
+    mapping = _make_mapping()
+    call_count = {"c": 0}
+
+    validation_queue = [
+        ValidationResult(passed=False, violations=["첫위반"], retry_feedback="x"),
+        ValidationResult(passed=True),
+    ]
+
+    def fake_generate_lesson(m, ctx, retry_feedback=None):
+        call_count["c"] += 1
+        return {"attempt": call_count["c"]}
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
+    monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
+    monkeypatch.setattr(
+        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms: validation_queue.pop(0)
+    )
+
+    result = orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None)
+    )
+
+    assert call_count["c"] == 2
+    assert result.warning is None
+    assert result.validation.passed is True
+
+
+def test_max_retries_and_diverged_warnings_differ():
+    assert orchestrate.MSG_MAX_RETRIES_EXCEEDED != orchestrate.MSG_VALIDATION_DIVERGED
+
+
 def test_validate_receives_caution_terms_from_a1(monkeypatch):
     """검증 호출 시 caution_terms가 A1 산출물(StructuredConcept)에서 전달된다."""
     concept_result = _make_concept_result(caution_terms=["과적합", "오버피팅"])

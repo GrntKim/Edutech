@@ -20,6 +20,7 @@ from app.agents.concept_collect.logic import analyze_concept as collect_concept
 from app.agents.curriculum_search.logic import search_curriculum
 from app.agents.lesson_generate.logic import generate_lesson as _generate_lesson
 from app.agents.mapping.logic import map_curriculum as map_concept
+from app.agents.validate.logic import validate
 from app.lib.db import DatabaseError
 from app.lib.gemini import GeminiError
 from app.lib.types import (
@@ -27,7 +28,6 @@ from app.lib.types import (
     MappingResult,
     PipelineContext,
     PipelineResult,
-    Subject,
     ValidationResult,
 )
 
@@ -41,6 +41,7 @@ MSG_UNSUPPORTED_CONCEPT = "입력하신 내용은 AI 개념으로 인식되지 �
 MSG_AMBIGUOUS_INPUT = "입력하신 개념이 너무 넓어 특정할 수 없습니다. 더 구체적인 AI 개념을 입력해 주세요."
 MSG_NO_CURRICULUM_MATCH = "해당 학년에서 연결 가능한 교육과정 성취기준을 찾지 못했습니다. 다른 학년이나 개념으로 다시 시도해 주세요."
 MSG_MAX_RETRIES_EXCEEDED = "검증 기준을 완전히 통과하지 못해 최선의 결과로 제공합니다. 내용을 확인한 뒤 사용해 주세요."
+MSG_VALIDATION_DIVERGED = "검증 결과가 수렴하지 않아 재시도를 중단했습니다"
 MSG_AGENT_FAILURE = "일시적인 오류로 교안 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."
 
 
@@ -54,7 +55,7 @@ def _elapsed_ms(start: float) -> float:
 #   A2: 완료 — app.agents.curriculum_search.logic.search_curriculum (파일 상단 import 참고)
 #   B:  완료 — app.agents.mapping.logic.map_curriculum (파일 상단 import 참고)
 #   C:  완료 — app.agents.lesson_generate.logic.generate_lesson (파일 상단 import 참고)
-#   D:  from app.agents.validate.logic import validate   ← 본인 구현 예정
+#   D:  완료 — app.agents.validate.logic.validate (파일 상단 import 참고)
 #
 # 각 스텁은 타입이 맞는 더미 객체를 반환한다 — 파이프라인 전체를 실제로
 # 한 번 돌려볼 수 있어야 하기 때문이다.
@@ -72,23 +73,6 @@ def generate_lesson(
     이유로 dict 계약이다 — model_dump()로 변환해서 그 계약을 지킨다.
     """
     return _generate_lesson(mapping, context, retry_feedback).model_dump()
-
-
-def validate(
-    lesson_plan: dict,
-    context: PipelineContext,
-    *,
-    subject: Subject,
-    caution_terms: list[str],
-) -> ValidationResult:
-    """[스텁] D(본인) 미구현 — agents/validate/logic.py 작성 후 교체 예정.
-
-    교체 대상: app.agents.validate.logic.validate(
-        lesson_plan: dict, context: PipelineContext, *, subject: Subject, caution_terms: list[str]
-    ) -> ValidationResult
-    """
-    logger.info("stub_call agent=D fn=validate")
-    return ValidationResult(passed=True)
 
 
 # ── 오케스트레이션 본체 ──────────────────────────────
@@ -170,6 +154,9 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
         retry_feedback: ValidationResult | None = None
         lesson_plan: dict | None = None
         validation: ValidationResult | None = None
+        # 직전 회차 위반 목록. 재시도해도 완전히 다른 위반이 나오면(수렴 불가)
+        # C가 해결할 수 있는 문제가 아니므로 조기 종료한다(아래 참고).
+        previous_violations: list[str] | None = None
 
         while True:
             try:
@@ -211,6 +198,21 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
             if validation.passed:
                 break
 
+            # 이전 위반과 완전히 다른 위반이 나오면 수렴 불가로 판단한다 — C가
+            # 지적받은 용어를 고치면 다른 용어가 걸리는 상태로, C가 해결할 수
+            # 있는 문제가 아니다. 첫 검증(previous_violations 없음)은 판정하지
+            # 않는다. 일부만 겹치면(isdisjoint=False) 개선 중이므로 계속 진행한다.
+            if previous_violations and set(validation.violations).isdisjoint(previous_violations):
+                logger.warning(
+                    f"pipeline_retry_diverged retry_count={retry_count} "
+                    f"elapsed_ms={_elapsed_ms(pipeline_start):.1f}"
+                )
+                return PipelineResult(
+                    lesson_plan=lesson_plan,
+                    validation=validation,
+                    warning=MSG_VALIDATION_DIVERGED,
+                )
+
             if retry_count >= MAX_RETRIES:
                 logger.info(
                     f"pipeline_retry_exhausted retry_count={retry_count} "
@@ -222,6 +224,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
                     warning=MSG_MAX_RETRIES_EXCEEDED,
                 )
 
+            previous_violations = validation.violations
             retry_feedback = validation
             retry_count += 1
 
