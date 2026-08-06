@@ -1,4 +1,4 @@
-from lib.types import (
+from app.lib.types import (
     GRADE_TO_BANDS,
     CurriculumChunk,
     GradeBand,
