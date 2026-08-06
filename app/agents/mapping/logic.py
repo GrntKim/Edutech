@@ -16,8 +16,13 @@ from pathlib import Path
 
 import yaml
 
-from lib.gemini import GeminiSchemaError, generate_structured
-from lib.types import MappingResult, PipelineContext, SearchResult, StructuredConcept
+from app.lib.gemini import GeminiSchemaError, generate_structured
+from app.lib.types import (
+    MappingResult,
+    PipelineContext,
+    SearchResult,
+    StructuredConcept,
+)
 
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .schema import MappingLLMResponse

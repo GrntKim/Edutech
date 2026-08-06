@@ -4,7 +4,7 @@ REQ-003 Mapping Agent Prompt
 LLM Prompt Builder
 """
 
-from lib.types import StructuredConcept, SearchResult
+from app.lib.types import StructuredConcept, SearchResult
 
 SYSTEM_PROMPT = """
 You are an expert in mapping AI concepts to the Korean elementary curriculum.

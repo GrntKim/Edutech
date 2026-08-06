@@ -5,11 +5,10 @@ Gemini API는 실제로 호출하지 않고 generate_structured를 가짜 함수
 
 import pytest
 
-from agents.mapping import logic
-from agents.mapping.schema import CriteriaScores, MappingLLMResponse
-from lib.gemini import GeminiSchemaError
-from lib.types import (
-    ConceptCategory,
+from app.agents.mapping import logic
+from app.agents.mapping.schema import CriteriaScores, MappingLLMResponse
+from app.lib.gemini import GeminiSchemaError
+from app.lib.types import (
     CurriculumChunk,
     GradeBand,
     PipelineContext,
@@ -21,8 +20,8 @@ from lib.types import (
 
 def _make_concept(**overrides) -> StructuredConcept:
     defaults = dict(
+        is_ai_concept=True,
         concept_name="분류",
-        category=ConceptCategory.CLASSIFICATION,
         one_line_definition="여러 대상을 기준에 따라 나누는 것",
         core_mechanism="정해진 기준으로 대상을 비교해 무리를 나눈다.",
         key_operations=["기준 정하기", "비교하기"],
@@ -228,8 +227,7 @@ class TestMapCurriculum:
         assert result.flags == ["remap_recommended"]
 
     def test_other_gemini_errors_are_not_swallowed(self, monkeypatch):
-        from lib.gemini import GeminiTimeoutError
-
+        from app.lib.gemini import GeminiTimeoutError
         results = _make_search_results("4수05-01")
 
         def raise_timeout(*args, **kwargs):
