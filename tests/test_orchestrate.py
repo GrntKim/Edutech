@@ -5,9 +5,16 @@
 Gemini·DB 실호출 없음.
 """
 
+import inspect
+
 import pytest
 
 from app.agents import orchestrate
+from app.agents.concept_collect.logic import analyze_concept
+from app.agents.curriculum_search.logic import CurriculumSearchError
+from app.agents.curriculum_search.logic import search_curriculum as real_search_curriculum
+from app.agents.mapping.logic import MappingError, map_curriculum
+from app.agents.validate.logic import validate as real_validate
 from app.lib.gemini import GeminiError
 from app.lib.types import (
     ConceptCollectResult,
@@ -85,6 +92,67 @@ def _make_mapping(subject=Subject.SCIENCE, concept_name="분류"):
 
 def _fail_if_called(*args, **kwargs):
     raise AssertionError("호출되면 안 되는 스텁이 호출됨")
+
+
+def _signature_shape(fn) -> list[tuple[str, str, bool]]:
+    """이름/종류(positional-or-keyword vs keyword-only)/기본값 유무만 비교한다.
+
+    타입 애너테이션까지 비교하면 monkeypatch fake(보통 애너테이션 없음)와
+    항상 불일치하므로 제외한다 — 여기서 잡으려는 건 "인자 개수·이름·필수
+    여부가 몰래 바뀌는 것"이지 타입 힌트 누락이 아니다.
+    """
+    return [
+        (name, str(param.kind), param.default is not inspect.Parameter.empty)
+        for name, param in inspect.signature(fn).parameters.items()
+    ]
+
+
+class TestAgentContractSignatures:
+    """#30 — monkeypatch로 갈아끼우는 A1~D 함수들의 실제 시그니처가 바뀌면 이 테스트가
+    깨져야 한다. 다른 테스트들은 fake 함수로 대체하므로 실제 시그니처가 바뀌어도
+    통과해버리는 사각지대였다.
+    """
+
+    def test_collect_concept_signature(self):
+        assert _signature_shape(orchestrate.collect_concept) == _signature_shape(analyze_concept)
+        assert _signature_shape(analyze_concept) == [
+            ("concept_input", "POSITIONAL_OR_KEYWORD", False),
+            ("context", "POSITIONAL_OR_KEYWORD", False),
+        ]
+
+    def test_search_curriculum_signature(self):
+        assert _signature_shape(orchestrate.search_curriculum) == _signature_shape(
+            real_search_curriculum
+        )
+        assert _signature_shape(real_search_curriculum) == [
+            ("query", "POSITIONAL_OR_KEYWORD", False),
+        ]
+
+    def test_map_concept_signature(self):
+        assert _signature_shape(orchestrate.map_concept) == _signature_shape(map_curriculum)
+        assert _signature_shape(map_curriculum) == [
+            ("concept", "POSITIONAL_OR_KEYWORD", False),
+            ("search_results", "POSITIONAL_OR_KEYWORD", False),
+            ("context", "POSITIONAL_OR_KEYWORD", False),
+        ]
+
+    def test_validate_signature(self):
+        assert _signature_shape(orchestrate.validate) == _signature_shape(real_validate)
+        assert _signature_shape(real_validate) == [
+            ("lesson_plan", "POSITIONAL_OR_KEYWORD", False),
+            ("context", "POSITIONAL_OR_KEYWORD", False),
+            ("subject", "KEYWORD_ONLY", False),
+            ("caution_terms", "KEYWORD_ONLY", False),
+        ]
+
+    def test_generate_lesson_signature(self):
+        # orchestrate.generate_lesson은 C의 실제 함수를 감싸는 자체 래퍼라
+        # (LessonOutput → dict 변환), 비교 대상은 이 래퍼 자신의 선언이다.
+        assert _signature_shape(orchestrate.generate_lesson) == [
+            ("mapping", "POSITIONAL_OR_KEYWORD", False),
+            ("context", "POSITIONAL_OR_KEYWORD", False),
+            ("retry_feedback", "POSITIONAL_OR_KEYWORD", True),
+        ]
 
 
 def test_normal_flow_returns_pipeline_result(monkeypatch):
@@ -459,6 +527,51 @@ def test_gemini_error_during_retry_falls_back_to_last_success(monkeypatch):
     assert call_count["c"] == 2
     assert result.lesson_plan == {"attempt": 1}
     assert result.warning == orchestrate.MSG_AGENT_FAILURE
+
+
+def test_curriculum_search_error_does_not_escape_pipeline(monkeypatch):
+    """#30 회귀 방지 — A2의 CurriculumSearchError(RuntimeError 직속)가 처리되지 않은
+    채 run_pipeline() 밖으로 새어나가지 않고 MSG_AGENT_FAILURE로 반환돼야 한다.
+    """
+    concept_result = _make_concept_result()
+
+    def fake_search_curriculum(query):
+        raise CurriculumSearchError("지원하지 않는 학년입니다: 9")
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", fake_search_curriculum)
+    monkeypatch.setattr(orchestrate, "map_concept", _fail_if_called)
+    monkeypatch.setattr(orchestrate, "generate_lesson", _fail_if_called)
+    monkeypatch.setattr(orchestrate, "validate", _fail_if_called)
+
+    result = orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None)
+    )
+
+    assert result.warning == orchestrate.MSG_AGENT_FAILURE
+    assert result.lesson_plan == {}
+
+
+def test_mapping_error_does_not_escape_pipeline(monkeypatch):
+    """#30 회귀 방지 — B의 MappingError(RuntimeError 직속)도 동일하게 처리돼야 한다."""
+    concept_result = _make_concept_result()
+    search_results = _make_search_results()
+
+    def fake_map_concept(concept, results, context):
+        raise MappingError("검색 결과가 없어 매핑을 수행할 수 없습니다.")
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
+    monkeypatch.setattr(orchestrate, "map_concept", fake_map_concept)
+    monkeypatch.setattr(orchestrate, "generate_lesson", _fail_if_called)
+    monkeypatch.setattr(orchestrate, "validate", _fail_if_called)
+
+    result = orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None)
+    )
+
+    assert result.warning == orchestrate.MSG_AGENT_FAILURE
+    assert result.lesson_plan == {}
 
 
 def test_pipeline_context_subject_hint_is_none(monkeypatch):
