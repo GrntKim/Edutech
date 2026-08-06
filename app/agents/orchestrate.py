@@ -17,9 +17,9 @@ import logging
 import time
 
 from app.agents.concept_collect.logic import analyze_concept as collect_concept
-from app.agents.curriculum_search.logic import search_curriculum
+from app.agents.curriculum_search.logic import CurriculumSearchError, search_curriculum
 from app.agents.lesson_generate.logic import generate_lesson as _generate_lesson
-from app.agents.mapping.logic import map_curriculum as map_concept
+from app.agents.mapping.logic import MappingError, map_curriculum as map_concept
 from app.agents.validate.logic import validate
 from app.lib.db import DatabaseError
 from app.lib.gemini import GeminiError
@@ -32,6 +32,15 @@ from app.lib.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 각 에이전트가 던지는 예외를 한곳에 모은다. GeminiError/DatabaseError만 잡던
+# 기존 튜플이 CurriculumSearchError(A2)·MappingError(B)를 놓쳐 A2/B 예외가
+# 처리되지 않은 채 파이프라인 밖으로 새어나갔다(#30). A2가 GeminiError만
+# 재포장하지 않고 그대로 올리는 부분 우회를 해뒀던 이유이기도 하다
+# (app/agents/curriculum_search/logic.py의 관련 주석 참고) — 이제 오케스트레이터가
+# 직접 잡으므로 그 우회는 더 이상 필요하지 않지만, A2 쪽 정리는 담당자 몫이라
+# 여기서는 건드리지 않는다.
+_AGENT_ERRORS = (GeminiError, DatabaseError, CurriculumSearchError, MappingError)
 
 # NFR-005-2: 검증 실패 시 최대 재시도 횟수. 초과하면 마지막 결과 + 경고로 강제 반환한다.
 MAX_RETRIES = 3
@@ -177,7 +186,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
                     f"stage_end stage=D passed={new_validation.passed} "
                     f"elapsed_ms={_elapsed_ms(stage_start):.1f}"
                 )
-            except (GeminiError, DatabaseError):
+            except _AGENT_ERRORS:
                 # 재시도가 오히려 장애를 키우지 않도록 즉시 중단한다. 직전 회차
                 # 결과가 있으면 그걸로 폴백하고, 첫 시도부터 실패했으면 바깥
                 # except로 넘겨 일반 실패 응답을 반환한다.
@@ -231,7 +240,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
         logger.info(f"pipeline_end elapsed_ms={_elapsed_ms(pipeline_start):.1f}")
         return PipelineResult(lesson_plan=lesson_plan, validation=validation, warning=None)
 
-    except (GeminiError, DatabaseError):
+    except _AGENT_ERRORS:
         logger.exception(
             f"pipeline_agent_failure elapsed_ms={_elapsed_ms(pipeline_start):.1f}"
         )
