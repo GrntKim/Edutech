@@ -6,7 +6,7 @@ run_pipeline() 자체를 호출하지 않는 이유: PipelineResult에는 최종
 확인하는 게 이번 실행의 주 목적이라, 같은 흐름을 여기서 한 번 더 조립해
 중간 결과를 전부 출력한다(로직 재구현이 아니라 orchestrate 모듈의 실제
 스테이지 함수를 그대로 호출 — run_pipeline() 안 부르는 대신 Gemini/DB를
-두 번 소모하지도 않는다). D(validate)는 아직 스텁(passed=True 고정)이다.
+두 번 소모하지도 않는다).
 
 사전 준비:
     1. Cloud SQL Proxy 실행 (docs/infra/REQ006-DB접속안내.md)
@@ -104,7 +104,9 @@ def main() -> None:
         validation = orchestrate.validate(
             lesson_plan, context, subject=mapping.subject, caution_terms=concept.caution_terms
         )
-        print(f"[D 검증] passed={validation.passed} ({_ms(t)}) — 현재 스텁(항상 통과)")
+        print(f"[D 검증] passed={validation.passed} ({_ms(t)})")
+        if not validation.passed:
+            print(f"  violations: {validation.violations}")
 
         if validation.passed or retry_count >= orchestrate.MAX_RETRIES:
             break
