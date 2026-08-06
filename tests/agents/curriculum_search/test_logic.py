@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pytest
@@ -331,27 +331,142 @@ class TestSearchWithinChunks:
         assert results == []
 
 
-class TestHybridSearch:
-    def test_empty_rows_returns_empty_list_without_calling_search_within_chunks(self, monkeypatch):
-        monkeypatch.setattr(logic, "_fetch_band_rows", lambda grade_bands: [])
-        search_mock = AsyncMock()
-        monkeypatch.setattr(logic, "search_within_chunks", search_mock)
+class TestSearchWithinChunksSync:
+    """search_within_chunks(async)의 동기 버전. 시나리오는 동일하게 미러링하되
+    _embed_text_sync/_llm_rerank_sync를 Mock으로 대체한다(AsyncMock 아님)."""
 
-        result = asyncio.run(hybrid_search(_make_query()))
+    def _run(self, query, chunks, embeddings):
+        return logic.search_within_chunks_sync(query, chunks, embeddings)
+
+    def test_empty_chunks_returns_empty_list_without_calling_embed_or_rerank(self, monkeypatch):
+        embed_mock = Mock()
+        rerank_mock = Mock()
+        monkeypatch.setattr(logic, "_embed_text_sync", embed_mock)
+        monkeypatch.setattr(logic, "_llm_rerank_sync", rerank_mock)
+
+        result = self._run(_make_query(), [], [])
+
+        assert result == []
+        embed_mock.assert_not_called()
+        rerank_mock.assert_not_called()
+
+    def test_normal_case_returns_results_matching_llm_order_and_dense_score(self, monkeypatch):
+        chunks = [_make_chunk("c1"), _make_chunk("c2")]
+        embeddings = [np.array([1.0, 0.0]), np.array([0.0, 1.0])]
+        monkeypatch.setattr(logic, "_embed_text_sync", Mock(return_value=[1.0, 0.0]))
+        monkeypatch.setattr(
+            logic,
+            "_llm_rerank_sync",
+            Mock(
+                return_value=_RerankResponse(
+                    matches=[
+                        _RerankMatch(chunk_id="c2", reasoning="r2"),
+                        _RerankMatch(chunk_id="c1", reasoning="r1"),
+                    ]
+                )
+            ),
+        )
+
+        results = self._run(_make_query(top_k=5), chunks, embeddings)
+
+        assert [r.chunk.chunk_id for r in results] == ["c2", "c1"]
+        assert [r.rank for r in results] == [1, 2]
+        assert results[0].similarity_score == pytest.approx(0.0)
+        assert results[1].similarity_score == pytest.approx(1.0)
+
+    def test_llm_matches_with_unknown_chunk_id_are_filtered_and_rank_stays_contiguous(
+        self, monkeypatch
+    ):
+        chunks = [_make_chunk("c1"), _make_chunk("c2"), _make_chunk("c3")]
+        embeddings = [np.array([1.0, 0.0]), np.array([0.0, 1.0]), np.array([1.0, 1.0])]
+        monkeypatch.setattr(logic, "_embed_text_sync", Mock(return_value=[1.0, 0.0]))
+        monkeypatch.setattr(
+            logic,
+            "_llm_rerank_sync",
+            Mock(
+                return_value=_RerankResponse(
+                    matches=[
+                        _RerankMatch(chunk_id="nonexistent", reasoning="유령"),
+                        _RerankMatch(chunk_id="c1", reasoning="r1"),
+                        _RerankMatch(chunk_id="c3", reasoning="r3"),
+                    ]
+                )
+            ),
+        )
+
+        results = self._run(_make_query(top_k=5), chunks, embeddings)
+
+        assert [r.chunk.chunk_id for r in results] == ["c1", "c3"]
+        assert [r.rank for r in results] == [1, 2]
+
+    def test_llm_empty_matches_returns_empty_results(self, monkeypatch):
+        chunks = [_make_chunk("c1")]
+        embeddings = [np.array([1.0, 0.0])]
+        monkeypatch.setattr(logic, "_embed_text_sync", Mock(return_value=[1.0, 0.0]))
+        monkeypatch.setattr(
+            logic, "_llm_rerank_sync", Mock(return_value=_RerankResponse(matches=[]))
+        )
+
+        results = self._run(_make_query(), chunks, embeddings)
+
+        assert results == []
+
+
+class TestLlmRerankExceptionPropagation:
+    """D 요청: GeminiError를 CurriculumSearchError로 다시 감싸지 않고 그대로 올려야
+    오케스트레이터의 (GeminiError, DatabaseError) 전역 핸들러가 잡을 수 있다."""
+
+    def test_llm_rerank_sync_propagates_gemini_error_unwrapped(self, monkeypatch):
+        def _raise(prompt, schema, **kwargs):
+            raise logic.GeminiError("쿼터 초과")
+
+        monkeypatch.setattr(logic, "generate_structured", _raise)
+
+        with pytest.raises(logic.GeminiError):
+            logic._llm_rerank_sync(_make_query(), [_make_chunk("c1")], top_k=5)
+
+    def test_llm_rerank_async_propagates_gemini_error_unwrapped(self, monkeypatch):
+        def _raise(prompt, schema, **kwargs):
+            raise logic.GeminiError("쿼터 초과")
+
+        monkeypatch.setattr(logic, "generate_structured", _raise)
+
+        with pytest.raises(logic.GeminiError):
+            asyncio.run(logic._llm_rerank(_make_query(), [_make_chunk("c1")], top_k=5))
+
+
+class TestSearchCurriculum:
+    """동기 코어(search_curriculum). D 요청(orchestrate.py 통합 이슈)으로 추가된
+    동기 진입점 — hybrid_search는 이 위에 asyncio.to_thread 래퍼일 뿐이다."""
+
+    def test_empty_rows_returns_empty_list_without_calling_search_within_chunks_sync(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(logic, "_fetch_band_rows", lambda grade_bands: [])
+        search_mock = Mock()
+        monkeypatch.setattr(logic, "search_within_chunks_sync", search_mock)
+
+        result = logic.search_curriculum(_make_query())
 
         assert result == []
         search_mock.assert_not_called()
 
-    def test_database_error_is_wrapped_as_curriculum_search_error(self, monkeypatch):
+    def test_database_error_propagates_unwrapped(self, monkeypatch):
+        """D 요청: CurriculumSearchError로 다시 감싸면 오케스트레이터의
+        (GeminiError, DatabaseError) 전역 핸들러를 못 타므로, 원본 DatabaseError를
+        그대로 올려야 한다."""
+
         def _raise(grade_bands):
             raise logic.DatabaseError("연결 실패")
 
         monkeypatch.setattr(logic, "_fetch_band_rows", _raise)
 
-        with pytest.raises(CurriculumSearchError):
-            asyncio.run(hybrid_search(_make_query()))
+        with pytest.raises(logic.DatabaseError):
+            logic.search_curriculum(_make_query())
 
-    def test_rows_are_parsed_into_chunks_and_delegated_to_search_within_chunks(self, monkeypatch):
+    def test_rows_are_parsed_into_chunks_and_delegated_to_search_within_chunks_sync(
+        self, monkeypatch
+    ):
         row = (
             "c1",
             "MATH",
@@ -370,22 +485,42 @@ class TestHybridSearch:
 
         captured = {}
 
-        async def _fake_search_within_chunks(query, chunks, embeddings):
+        def _fake_search_within_chunks_sync(query, chunks, embeddings):
             captured["query"] = query
             captured["chunks"] = chunks
             captured["embeddings"] = embeddings
             return ["dummy-result"]
 
-        monkeypatch.setattr(logic, "search_within_chunks", _fake_search_within_chunks)
+        monkeypatch.setattr(logic, "search_within_chunks_sync", _fake_search_within_chunks_sync)
 
         query = _make_query()
-        result = asyncio.run(hybrid_search(query))
+        result = logic.search_curriculum(query)
 
         assert result == ["dummy-result"]
         assert captured["query"] is query
         assert len(captured["chunks"]) == 1
         assert captured["chunks"][0].chunk_id == "c1"
         assert isinstance(captured["embeddings"][0], np.ndarray)
+
+
+class TestHybridSearch:
+    """hybrid_search는 search_curriculum을 asyncio.to_thread로 감싸는 async
+    호환 래퍼일 뿐이라, 여기서는 그 위임 자체만 검증한다."""
+
+    def test_delegates_to_search_curriculum_via_to_thread(self, monkeypatch):
+        captured = {}
+
+        def _fake_search_curriculum(query):
+            captured["query"] = query
+            return ["dummy-result"]
+
+        monkeypatch.setattr(logic, "search_curriculum", _fake_search_curriculum)
+
+        query = _make_query()
+        result = asyncio.run(hybrid_search(query))
+
+        assert result == ["dummy-result"]
+        assert captured["query"] is query
 
 
 class TestFetchBandRows:
