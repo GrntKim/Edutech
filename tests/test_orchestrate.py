@@ -94,7 +94,7 @@ def test_normal_flow_returns_pipeline_result(monkeypatch):
     search_results = _make_search_results()
     mapping = _make_mapping()
 
-    def fake_collect_concept(user_input):
+    def fake_collect_concept(user_input, context):
         calls.append("A1")
         return concept_result
 
@@ -135,7 +135,7 @@ def test_a1_unsupported_concept_short_circuits(monkeypatch):
     calls = []
     concept_result = _make_concept_result(status="unsupported_concept")
 
-    def fake_collect_concept(user_input):
+    def fake_collect_concept(user_input, context):
         calls.append("A1")
         return concept_result
 
@@ -157,7 +157,7 @@ def test_a1_ambiguous_input_short_circuits(monkeypatch):
     """A1이 ambiguous_input 반환 → 동일하게 조기 종료."""
     concept_result = _make_concept_result(status="ambiguous_input")
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", _fail_if_called)
     monkeypatch.setattr(orchestrate, "map_concept", _fail_if_called)
     monkeypatch.setattr(orchestrate, "generate_lesson", _fail_if_called)
@@ -174,7 +174,7 @@ def test_a2_empty_results_short_circuits(monkeypatch):
     """A2가 빈 리스트 반환 → B 호출 안 되고 정상 종료."""
     concept_result = _make_concept_result()
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: [])
     monkeypatch.setattr(orchestrate, "map_concept", _fail_if_called)
     monkeypatch.setattr(orchestrate, "generate_lesson", _fail_if_called)
@@ -198,7 +198,7 @@ def test_map_concept_receives_context(monkeypatch):
         received["context"] = context
         return mapping
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", fake_map_concept)
     monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
@@ -227,7 +227,7 @@ def test_validation_retries_once_then_passes(monkeypatch):
         c_feedbacks.append(retry_feedback)
         return {"attempt": len(c_feedbacks)}
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
     monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
@@ -261,7 +261,7 @@ def test_validation_exhausts_retries(monkeypatch):
         call_count["d"] += 1
         return ValidationResult(passed=False, violations=["금지어"], retry_feedback="다시 생성")
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
     monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
@@ -288,7 +288,7 @@ def test_validate_receives_caution_terms_from_a1(monkeypatch):
         received["caution_terms"] = caution_terms
         return ValidationResult(passed=True)
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
     monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
@@ -311,7 +311,7 @@ def test_validate_receives_subject_from_mapping_not_context(monkeypatch):
         received["context_subject_hint"] = ctx.subject_hint
         return ValidationResult(passed=True)
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
     monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
@@ -339,7 +339,7 @@ def test_gemini_error_during_retry_falls_back_to_last_success(monkeypatch):
     def fake_validate(lp, ctx, *, subject, caution_terms):
         return ValidationResult(passed=False, violations=["금지어"], retry_feedback="다시 생성")
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
     monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
@@ -365,7 +365,7 @@ def test_pipeline_context_subject_hint_is_none(monkeypatch):
         received["context"] = context
         return mapping
 
-    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui: concept_result)
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", fake_map_concept)
     monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})

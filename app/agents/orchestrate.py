@@ -16,19 +16,17 @@ from __future__ import annotations
 import logging
 import time
 
+from app.agents.concept_collect.logic import analyze_concept as collect_concept
+from app.agents.curriculum_search.logic import search_curriculum
+from app.agents.lesson_generate.logic import generate_lesson as _generate_lesson
+from app.agents.mapping.logic import map_curriculum as map_concept
 from app.lib.db import DatabaseError
 from app.lib.gemini import GeminiError
 from app.lib.types import (
-    ConceptCollectResult,
     ConceptInput,
-    CurriculumChunk,
-    GradeBand,
     MappingResult,
     PipelineContext,
     PipelineResult,
-    SearchQuery,
-    SearchResult,
-    StructuredConcept,
     Subject,
     ValidationResult,
 )
@@ -52,95 +50,14 @@ def _elapsed_ms(start: float) -> float:
 
 # ── 미구현 에이전트 스텁 ──────────────────────────────
 # 각 담당자의 구현이 완료되면 아래 스텁을 삭제하고 실제 import로 교체한다.
-#   A1: from app.agents.concept_collect.logic import collect_concept
-#   A2: from app.agents.curriculum_search.logic import search_curriculum
-#   B:  from app.agents.mapping.logic import map_concept
-#   C:  from app.agents.lesson_generate.logic import generate_lesson
+#   A1: 완료 — app.agents.concept_collect.logic.analyze_concept (파일 상단 import 참고)
+#   A2: 완료 — app.agents.curriculum_search.logic.search_curriculum (파일 상단 import 참고)
+#   B:  완료 — app.agents.mapping.logic.map_curriculum (파일 상단 import 참고)
+#   C:  완료 — app.agents.lesson_generate.logic.generate_lesson (파일 상단 import 참고)
 #   D:  from app.agents.validate.logic import validate   ← 본인 구현 예정
 #
 # 각 스텁은 타입이 맞는 더미 객체를 반환한다 — 파이프라인 전체를 실제로
 # 한 번 돌려볼 수 있어야 하기 때문이다.
-
-
-def collect_concept(user_input: ConceptInput) -> ConceptCollectResult:
-    """[스텁] A1 미구현.
-
-    교체 대상: app.agents.concept_collect.logic.collect_concept(user_input: ConceptInput) -> ConceptCollectResult
-    """
-    logger.info("stub_call agent=A1 fn=collect_concept")
-    dummy_query = SearchQuery(
-        concept_name=user_input.raw_concept_name,
-        concept_definition="스텁 정의",
-        target_grade=user_input.target_grade,
-    )
-    dummy_concept = StructuredConcept(
-        is_ai_concept=True,
-        concept_name=user_input.raw_concept_name,
-        one_line_definition="스텁 정의",
-        core_mechanism="스텁 메커니즘",
-        key_operations=["스텁 연산"],
-        prerequisite_ideas=["스텁 선행 개념"],
-        everyday_examples=["스텁 예시"],
-        caution_terms=[],
-    )
-    return ConceptCollectResult(
-        concept=dummy_concept,
-        search_query=dummy_query,
-        model_version="stub",
-        prompt_version="stub",
-        retry_count=0,
-        status="success",
-    )
-
-
-def search_curriculum(query: SearchQuery) -> list[SearchResult]:
-    """[스텁] A2 미구현.
-
-    교체 대상: app.agents.curriculum_search.logic.search_curriculum(query: SearchQuery) -> list[SearchResult]
-    """
-    logger.info("stub_call agent=A2 fn=search_curriculum")
-    dummy_chunk = CurriculumChunk(
-        chunk_id="stub-chunk-001",
-        subject=Subject.SCIENCE,
-        grade_band=GradeBand.G3_4,
-        unit_name="스텁 단원",
-        domain="스텁 영역",
-        core_idea="스텁 핵심 아이디어",
-        achievement_code="[stub]",
-        achievement_text="스텁 성취기준",
-        explanation="스텁 해설",
-        inquiry_activities=["스텁 활동"],
-        source_page=0,
-    )
-    return [SearchResult(chunk=dummy_chunk, similarity_score=1.0, rank=1)]
-
-
-def map_concept(
-    concept: StructuredConcept,
-    search_results: list[SearchResult],
-    context: PipelineContext,
-) -> MappingResult:
-    """[스텁] B 미구현.
-
-    교체 대상: app.agents.mapping.logic.map_concept(
-        concept: StructuredConcept, search_results: list[SearchResult], context: PipelineContext
-    ) -> MappingResult
-    """
-    logger.info("stub_call agent=B fn=map_concept")
-    chunk = search_results[0].chunk
-    return MappingResult(
-        chunk_id=chunk.chunk_id,
-        achievement_code=chunk.achievement_code,
-        subject=chunk.subject,
-        unit_name=chunk.unit_name,
-        mapping_reason="스텁 매핑 사유",
-        analogy="스텁 비유",
-        confidence=1.0,
-        criteria_scores={},
-        flags=[],
-        concept_name=concept.concept_name,
-        inquiry_activities=chunk.inquiry_activities,
-    )
 
 
 def generate_lesson(
@@ -148,18 +65,13 @@ def generate_lesson(
     context: PipelineContext,
     retry_feedback: ValidationResult | None = None,
 ) -> dict:
-    """[스텁] C 미구현.
+    """C의 generate_lesson()이 반환하는 LessonOutput(Pydantic)을 dict로 변환한다.
 
-    교체 대상: app.agents.lesson_generate.logic.generate_lesson(
-        mapping: MappingResult, context: PipelineContext, retry_feedback: ValidationResult | None = None
-    ) -> dict
-
-    반환 타입이 dict인 이유: LessonOutput은 C 소유(app/agents/lesson_generate/)라
-    공통 계층(orchestrate.py)이 그 타입을 참조하면 의존 방향이 뒤집힌다.
-    PipelineResult.lesson_plan도 같은 이유로 dict다.
+    LessonOutput은 C 소유(app/agents/lesson_generate/)라 공통 계층(orchestrate.py)이
+    그 타입을 직접 참조하면 의존 방향이 뒤집힌다. PipelineResult.lesson_plan도 같은
+    이유로 dict 계약이다 — model_dump()로 변환해서 그 계약을 지킨다.
     """
-    logger.info(f"stub_call agent=C fn=generate_lesson has_feedback={retry_feedback is not None}")
-    return {"title": f"스텁 교안 - {mapping.concept_name}", "body": "스텁 본문"}
+    return _generate_lesson(mapping, context, retry_feedback).model_dump()
 
 
 def validate(
@@ -204,7 +116,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
         # ① A1: 개념 수집
         stage_start = time.monotonic()
         logger.info(f"stage_start stage=A1 concept={user_input.raw_concept_name!r}")
-        concept_result = collect_concept(user_input)
+        concept_result = collect_concept(user_input, context)
         logger.info(
             f"stage_end stage=A1 status={concept_result.status} "
             f"elapsed_ms={_elapsed_ms(stage_start):.1f}"
