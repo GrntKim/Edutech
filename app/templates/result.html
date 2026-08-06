@@ -1,54 +1,245 @@
+{% if warning %}
+<div class="notice">{{ warning }}</div>
+{% endif %}
 
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Edutech - 교안 생성 결과</title>
-    <link rel="stylesheet" href="../static/style.css">
-    <style>
-        body { font-family: sans-serif; font-size: 10pt; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
-        h1 { font-size: 1.4rem; text-align: center; margin-bottom: 1.5rem; }
-        table.form { width: 97%; margin: 0 auto 1rem; border-collapse: collapse; }
-        table.form th, table.form td { border: 1px solid #999; padding: 0.5rem 0.75rem; vertical-align: top; text-align: left; }
-        table.form th { background: #f2f2f2; text-align: center; }
-        table.meta th { width: 11rem; white-space: nowrap; background: #D4E0EC; color: #000; }
-        table.form th.eval { background: #e3ecfa; }
-        table.eval-table { width: 100%; border-collapse: collapse; }
-        table.eval-table th, table.eval-table td { border: 1px solid #999; padding: 0.3rem 0.5rem; text-align: left; }
-        table.eval-table th { background: #f2f2f2; text-align: center; width: 3rem; }
-        table.form th.stage-header { background: #D4E0EC; color: #000; }
-        .stage-label { font-weight: bold; white-space: nowrap; text-align: center; background: #D4E0EC; color: #000; }
-        .content-label { font-weight: bold; white-space: nowrap; }
-        .stage-time { font-weight: normal; color: #555; white-space: nowrap; text-align: center; }
-        .tools-notes { font-size: 9pt; }
-        .activity { white-space: pre-line; }
-        .content-heading { font-weight: bold; margin-bottom: 0.4rem; }
-        .procedure-box { border: 1px solid #333; border-radius: 4px; padding: 0.5rem 0.75rem; margin: 0 0 0.5rem; white-space: pre-line; }
-        .announce-cell { white-space: normal; }
-        .announce-headers { display: flex; justify-content: space-between; gap: 1rem; font-weight: bold; white-space: pre-line; margin-bottom: 0.5rem; }
-        .announce-box { border: 1px solid #333; border-radius: 4px; padding: 0.5rem 0.75rem; text-align: center; white-space: pre-line; }
-        ul.plain { margin: 0; padding-left: 1.1rem; }
-        ul.plain li { margin-bottom: 0.2rem; }
-        .worksheet-sheet { border: 2px solid #333; border-radius: 8px; padding: 1.25rem 1.5rem; margin-top: 0.5rem; }
-        .worksheet-sheet h3 { text-align: center; margin: 0 0 0.5rem; font-size: 1.2rem; }
-        .worksheet-mission { background: #fff6e0; border: 1px solid #e0c878; border-radius: 6px; padding: 0.6rem 0.9rem; margin-bottom: 1.25rem; }
-        .worksheet-section { margin-bottom: 1.25rem; padding: 0.75rem 1rem; border-radius: 6px; border-left: 5px solid; }
-        .worksheet-section.color-a { background: #eef6ff; border-left-color: #5b9bd5; }
-        .worksheet-section.color-b { background: #eefaf0; border-left-color: #4caf7d; }
-        .worksheet-section.color-c { background: #fdf2ff; border-left-color: #b06fd6; }
-        .worksheet-section.color-d { background: #fff7e8; border-left-color: #e0a83c; }
-        .worksheet-section .step-label { font-weight: bold; margin-bottom: 0.3rem; }
-        .worksheet-section .instruction { margin: 0 0 0.4rem; white-space: pre-line; }
-        .worksheet-reflection { background: #eef3ff; border: 1px solid #c3d2f0; border-radius: 6px; padding: 0.75rem 1rem; }
-        .worksheet-reflection h4 { margin: 0 0 0.5rem; }
-        table.worksheet-table { width: 100%; border-collapse: collapse; margin: 0.5rem 0 0.75rem; }
-        table.worksheet-table th, table.worksheet-table td { border: 1px solid #999; padding: 0.4rem 0.6rem; text-align: left; }
-        table.worksheet-table th { background: #f2f2f2; }
-    </style>
-</head>
-<body>
+{% if lesson %}
+<style>
+    .lesson-sheet {
+        font-family: sans-serif;
+        font-size: 10pt;
+        margin: 2rem 0;
+        line-height: 1.6;
+    }
+
+    .lesson-sheet h1 {
+        font-size: 1.4rem;
+        text-align: center;
+        margin-bottom: 1.5rem;
+    }
+
+    .lesson-sheet h2 {
+        font-size: 1.2rem;
+        margin: 1.5rem 0 0.5rem;
+    }
+
+    .lesson-sheet table.form {
+        width: 97%;
+        margin: 0 auto 1rem;
+        border-collapse: collapse;
+    }
+
+    .lesson-sheet table.form th,
+    .lesson-sheet table.form td {
+        border: 1px solid #999;
+        padding: 0.5rem 0.75rem;
+        vertical-align: top;
+        text-align: left;
+    }
+
+    .lesson-sheet table.form th {
+        background: #f2f2f2;
+        text-align: center;
+    }
+
+    .lesson-sheet table.meta th {
+        width: 11rem;
+        white-space: nowrap;
+        background: #D4E0EC;
+        color: #000;
+    }
+
+    .lesson-sheet table.form th.eval {
+        background: #e3ecfa;
+    }
+
+    .lesson-sheet table.eval-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .lesson-sheet table.eval-table th,
+    .lesson-sheet table.eval-table td {
+        border: 1px solid #999;
+        padding: 0.3rem 0.5rem;
+        text-align: left;
+    }
+
+    .lesson-sheet table.eval-table th {
+        background: #f2f2f2;
+        text-align: center;
+        width: 3rem;
+    }
+
+    .lesson-sheet table.form th.stage-header {
+        background: #D4E0EC;
+        color: #000;
+    }
+
+    .lesson-sheet .stage-label {
+        font-weight: bold;
+        white-space: nowrap;
+        text-align: center;
+        background: #D4E0EC;
+        color: #000;
+    }
+
+    .lesson-sheet .content-label {
+        font-weight: bold;
+        white-space: nowrap;
+    }
+
+    .lesson-sheet .stage-time {
+        font-weight: normal;
+        color: #555;
+        white-space: nowrap;
+        text-align: center;
+    }
+
+    .lesson-sheet .tools-notes {
+        font-size: 9pt;
+    }
+
+    .lesson-sheet .activity-text {
+        white-space: pre-line;
+    }
+
+    .lesson-sheet .content-heading {
+        font-weight: bold;
+        margin-bottom: 0.4rem;
+    }
+
+    .lesson-sheet .procedure-box {
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 0.5rem 0.75rem;
+        margin: 0 0 0.5rem;
+        white-space: pre-line;
+    }
+
+    .lesson-sheet .announce-cell {
+        white-space: normal;
+    }
+
+    .lesson-sheet .announce-headers {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+    }
+
+    .lesson-sheet .announce-box {
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 0.5rem 0.75rem;
+        text-align: center;
+        white-space: pre-line;
+    }
+
+    .lesson-sheet ul.plain,
+    .lesson-sheet ol.plain {
+        margin: 0;
+        padding-left: 1.1rem;
+    }
+
+    .lesson-sheet ul.plain li,
+    .lesson-sheet ol.plain li {
+        margin-bottom: 0.2rem;
+    }
+
+    .lesson-sheet .worksheet-sheet {
+        border: 2px solid #333;
+        border-radius: 8px;
+        padding: 1.25rem 1.5rem;
+        margin-top: 0.5rem;
+    }
+
+    .lesson-sheet .worksheet-sheet h3 {
+        text-align: center;
+        margin: 0 0 0.5rem;
+        font-size: 1.2rem;
+    }
+
+    .lesson-sheet .worksheet-mission {
+        background: #fff6e0;
+        border: 1px solid #e0c878;
+        border-radius: 6px;
+        padding: 0.6rem 0.9rem;
+        margin-bottom: 1.25rem;
+    }
+
+    .lesson-sheet .worksheet-section {
+        margin-bottom: 1.25rem;
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        border-left: 5px solid;
+    }
+
+    .lesson-sheet .worksheet-section.color-a {
+        background: #eef6ff;
+        border-left-color: #5b9bd5;
+    }
+
+    .lesson-sheet .worksheet-section.color-b {
+        background: #eefaf0;
+        border-left-color: #4caf7d;
+    }
+
+    .lesson-sheet .worksheet-section.color-c {
+        background: #fdf2ff;
+        border-left-color: #b06fd6;
+    }
+
+    .lesson-sheet .worksheet-section.color-d {
+        background: #fff7e8;
+        border-left-color: #e0a83c;
+    }
+
+    .lesson-sheet .worksheet-section .step-label {
+        font-weight: bold;
+        margin-bottom: 0.3rem;
+    }
+
+    .lesson-sheet .worksheet-section .instruction {
+        margin: 0 0 0.4rem;
+        white-space: pre-line;
+    }
+
+    .lesson-sheet .worksheet-reflection {
+        background: #eef3ff;
+        border: 1px solid #c3d2f0;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+    }
+
+    .lesson-sheet .worksheet-reflection h4 {
+        margin: 0 0 0.5rem;
+    }
+
+    .lesson-sheet table.worksheet-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 0.5rem 0 0.75rem;
+    }
+
+    .lesson-sheet table.worksheet-table th,
+    .lesson-sheet table.worksheet-table td {
+        border: 1px solid #999;
+        padding: 0.4rem 0.6rem;
+        text-align: left;
+    }
+
+    .lesson-sheet table.worksheet-table th {
+        background: #f2f2f2;
+    }
+</style>
+
+<div class="lesson-sheet">
     <h1>교수학습과정안</h1>
+
+    {% if docx_name %}
+    <a href="/download/{{ docx_name }}?title={{ lesson.topic | urlencode }}" class="download-btn">DOCX 다운로드</a>
+    {% endif %}
 
     <table class="form meta">
         <tr>
@@ -115,11 +306,12 @@
             <th class="stage-header">학생 활동</th>
         </tr>
         {% set content_label_breaks = {
-            "전시학습 상기": "전시학습<br>상기",
-            "학습 문제 안내하기": "학습 문제<br>안내하기",
-            "학습 내용 정리": "학습 내용<br>정리",
+        "전시학습 상기": "전시학습<br>상기",
+        "학습 문제 안내하기": "학습 문제<br>안내하기",
+        "학습 내용 정리": "학습 내용<br>정리",
         } %}
-        {% for stage_label, activities in [("도입", lesson.lesson_stages.intro), ("전개", lesson.lesson_stages.development), ("정리", lesson.lesson_stages.wrap_up)] %}
+        {% for stage_label, activities in [("도입", lesson.lesson_stages.intro), ("전개",
+        lesson.lesson_stages.development), ("정리", lesson.lesson_stages.wrap_up)] %}
         {% for act in activities %}
         <tr>
             {% if loop.first %}
@@ -153,12 +345,12 @@
             <td class="activity">
                 <div class="content-heading">{{ student_lines[0] }}</div>
                 {% if student_lines[1:] %}
-                <div>{{ student_lines[1:] | join("\n") }}</div>
+                <div class="activity-text">{{ student_lines[1:] | join("\n") }}</div>
                 {% endif %}
             </td>
             {% else %}
-            <td class="activity">{{ act.teacher }}</td>
-            <td class="activity">{{ act.student }}</td>
+            <td class="activity"><span class="activity-text">{{ act.teacher }}</span></td>
+            <td class="activity"><span class="activity-text">{{ act.student }}</span></td>
             {% endif %}
             <td class="stage-time">{{ act.time }}</td>
             <td class="tools-notes">
@@ -180,9 +372,18 @@
         <tr>
             <td colspan="6">
                 <table class="eval-table">
-                    <tr><th>상</th><td>{{ lesson.evaluation_criteria.high }}</td></tr>
-                    <tr><th>중</th><td>{{ lesson.evaluation_criteria.mid }}</td></tr>
-                    <tr><th>하</th><td>{{ lesson.evaluation_criteria.low }}</td></tr>
+                    <tr>
+                        <th>상</th>
+                        <td>{{ lesson.evaluation_criteria.high }}</td>
+                    </tr>
+                    <tr>
+                        <th>중</th>
+                        <td>{{ lesson.evaluation_criteria.mid }}</td>
+                    </tr>
+                    <tr>
+                        <th>하</th>
+                        <td>{{ lesson.evaluation_criteria.low }}</td>
+                    </tr>
                 </table>
             </td>
         </tr>
@@ -214,9 +415,9 @@
                 {% endfor %}
             </table>
             {% endif %}
-            {% if section.items %}
+            {% if section["items"] %}
             <ol class="plain">
-                {% for item in section.items %}
+                {% for item in section["items"] %}
                 <li>{{ item }}</li>
                 {% endfor %}
             </ol>
@@ -234,5 +435,5 @@
         </div>
     </div>
     {% endif %}
-</body>
-</html>
+</div>
+{% endif %}

@@ -1,0 +1,75 @@
+* {
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.site-header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+    font-weight: bold;
+}
+
+main {
+    flex: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+.info-form {
+    padding-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    row-gap: 1rem;
+}
+
+.info-form button {
+    align-self: flex-start;
+    padding: 0.1rem 0.2rem;
+}
+
+.site-footer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator { display: block; }
+.htmx-request.htmx-indicator { display: block; } 
+
+.notice {
+    max-width: 900px;
+    margin: 2rem auto;
+    padding: 1rem;
+    border: 1px solid #e0c878;
+    border-radius: 6px;
+    background: #fff6e0;
+}
+
+.download-btn {
+    display: inline-block;
+    margin-bottom: 1rem;
+    padding: 0.5rem 1rem;
+    background: #2f6f4f;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+.download-btn:hover {
+    background: #24593f;
+}
