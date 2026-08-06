@@ -4,9 +4,38 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Edutech</title>
-    <link rel="stylesheet" href="../static/style.css">
+    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
 <body>
-    <p>{{ msg }}</p>
+    <header class="site-header">
+        EDUTECH - PROTOTYPE
+    </header>
+    <main>
+        <p>교안 생성 시스템에 오신 것을 환영합니다.</p>
+        <form hx-post="/generate" hx-target="#result" hx-indicator="#spinner" hx-request='{"timeout": 180000}' class="info-form">
+            <div>
+                <label for="concept-input">개념</label>
+                <input type="text" id="concept-input" name="concept" required placeholder="개념을 입력하세요"/>
+            </div>
+            <div>
+                <label for="grade-select">학년</label>
+                <select name="grade" id="grade-select" required>
+                    <option value="1">1학년</option>
+                    <option value="2">2학년</option>
+                    <option value="3">3학년</option>
+                    <option value="4">4학년</option>
+                    <option value="5">5학년</option>
+                    <option value="6">6학년</option>
+                </select>
+            </div>
+            <button type="submit">생성하기</button>
+        </form>
+        <div id="spinner" class="htmx-indicator">생성 중입니다... 최대 1분 정도 걸립니다.</div>
+        <div id="result"></div>
+    </main>
+    <footer class="site-footer">
+        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
+    </footer>
 </body>
 </html>
