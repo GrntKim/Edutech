@@ -56,6 +56,7 @@ def generate_lesson(
         topic=content.topic,
         subject=subject_label(lesson_input.subject),
         achievement_code=lesson_input.achievement_code,
+        achievement_statement=standard.statement,
         ai_digital_tool=content.ai_digital_tool,
         learning_objectives=content.learning_objectives,
         materials=content.materials,

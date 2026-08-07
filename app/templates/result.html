@@ -263,7 +263,7 @@
         </tr>
         <tr>
             <th>성취 기준</th>
-            <td>{{ lesson.achievement_code }}</td>
+            <td>{{ lesson.achievement_code }} {{ lesson.achievement_statement }}</td>
         </tr>
         <tr>
             <th>학습 목표</th>
@@ -317,7 +317,8 @@
             {% if loop.first %}
             <td class="stage-label" rowspan="{{ activities | length }}">{{ stage_label }}</td>
             {% endif %}
-            <td class="content-label">{{ content_label_breaks.get(act.content_label, act.content_label) | safe }}</td>
+            {% set label_break = content_label_breaks.get(act.content_label) %}
+            <td class="content-label">{% if label_break %}{{ label_break | safe }}{% else %}{{ act.content_label }}{% endif %}</td>
             {% if act.content_label == "학습 문제 안내하기" %}
             <td class="activity announce-cell" colspan="2">
                 <div class="announce-headers">
