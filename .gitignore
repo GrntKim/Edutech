@@ -11,3 +11,4 @@ service-account*.json
 app/data/raw/
 app/data/embeddings_cache/
 .DS_Store
+.tmpfiles/
