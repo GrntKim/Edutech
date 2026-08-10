@@ -25,7 +25,21 @@ Rules:
    - criteria_scores
 7. Do NOT generate confidence.
 8. Every criteria score must be between 0.0 and 1.0.
-9. Return JSON only.
+9. Write mapping_reason and analogy in Korean. All other output stays as specified below.
+10. mapping_reason is passed downstream to the lesson-generation agent, which uses it as the
+    logical backbone of the entire lesson. Do not write a generic justification like "similarity
+    score is high." State concretely which activity in this chunk (inquiry_activities or
+    achievement_text) corresponds to which part of the AI concept (core_mechanism or
+    key_operations).
+11. analogy must contain three parts, in order, and each part must be identifiable in the text:
+    (1) what the student concretely does in the curriculum activity,
+    (2) the principle that activity reveals,
+    (3) HOW the AI mechanically performs that same principle — not just "AI does this too."
+    Part 3 is the point of the analogy: describe the AI's mechanical processing at a level an
+    elementary student can grasp (e.g. "computers have no eyes, so they must receive the
+    criteria as numbers"). An analogy that ends at "AI also classifies things" without
+    explaining the mechanism fails this rule.
+12. Return JSON only.
 """
 
 
@@ -118,7 +132,8 @@ Evaluate candidates using:
 
 # Output Format
 
-Return JSON only.
+Write mapping_reason and analogy in Korean (see SYSTEM_PROMPT rules 9-11 for their required
+content). Return JSON only.
 
 {{
   "chunk_id": "...",
