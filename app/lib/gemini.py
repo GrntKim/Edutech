@@ -136,6 +136,7 @@ def _call_generate(
     prompt_version: str | None,
     response_mime_type: str | None = None,
     response_schema: type[BaseModel] | None = None,
+    seed: int | None = None,
 ) -> str:
     """API 레벨 실패(타임아웃/429/5xx)만 재시도하는 공통 호출부. 원문 텍스트를 반환한다."""
     client = _get_client()
@@ -144,11 +145,16 @@ def _call_generate(
     # 분리 원칙이 깨지는 지점이니 통합 테스트에서 실제 동작을 확인할 것. 문제가 되면
     # response_schema는 넘기지 말고 response_mime_type만으로 JSON을 강제한 뒤
     # 파싱은 전부 이 모듈에서 하는 방식으로 바꾼다.
+    # seed: 기본값 None이면 SDK가 매번 임의 시드를 쓴다(기존 동작과 동일, 다른
+    # 호출자에게 영향 없음). 값을 넘기면 "최선 노력으로" 같은 응답을 재현한다(SDK
+    # 문서 표현 그대로 — 완전한 결정성은 보장되지 않음). A2 리랭킹의 실행별 결과
+    # 변동을 줄여보려는 시도(2026-08-10)로 도입.
     config = types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
         response_mime_type=response_mime_type,
         response_schema=response_schema,
         http_options=types.HttpOptions(timeout=int(timeout_s * 1000)),
+        seed=seed,
     )
 
     last_error: GeminiError | None = None
@@ -214,12 +220,15 @@ def generate_structured(
     timeout_s: float = 30.0,
     max_retries: int = 2,
     prompt_version: str | None = None,
+    seed: int | None = None,
 ) -> T:
     """구조화 출력(JSON) 강제 호출.
 
     response_schema로 파싱·검증된 인스턴스를 반환한다. 파싱/검증 실패는
     재시도하지 않고 GeminiSchemaError로 즉시 올린다 — 재생성 재시도는
     호출한 에이전트(A1/A2/B/C/D)의 책임이다.
+
+    seed 기본값은 None(기존 동작 유지, 무작위 시드) — 지정한 호출자만 영향받는다.
 
     사용처: A1 개념 생성/쿼리 재작성, A2 리랭킹, B 매핑, C 교안 생성, D 2단계 검증.
     """
@@ -232,6 +241,7 @@ def generate_structured(
         prompt_version=prompt_version,
         response_mime_type="application/json",
         response_schema=response_schema,
+        seed=seed,
     )
     try:
         data = json.loads(raw_text)

@@ -46,6 +46,12 @@ RERANK_MODEL = "gemini-3.6-flash"
 # 리랭킹 비결정성 자체는 여전히 남음(§4 리스크 "LLM 리랭킹의 비결정성" 참고).
 RERANK_THINKING_LEVEL = "low"
 
+# 2026-08-10: 동일 입력에 대해 실행마다 리랭킹 결과가 달라지는 문제(L1-a/L2-a)의
+# 완화 시도로 고정 seed를 도입. SDK 문서상 "최선 노력" 재현이라 완전한 결정성은
+# 보장되지 않지만, 매번 임의 시드를 쓰던 기존 상태보다는 변동을 줄일 것으로 기대.
+# 값 자체엔 의미 없음 — 그냥 고정된 정수.
+RERANK_SEED = 42
+
 # grade_band 필터만으로는 최대 262개 청크가 그대로 통과한다(GRADE_TO_BANDS가 누적 구조라
 # 5~6학년 질의는 전체 코퍼스와 동일). 청크 하나당 평균 900자 안팎이라 전부 LLM에 넘기면
 # 입력 토큰이 10만 개 수준까지 올라가 NFR-002-1(2초 이내 응답)을 지키기 어렵다.
@@ -268,6 +274,7 @@ def _llm_rerank_sync(query: SearchQuery, candidates: list[CurriculumChunk], top_
             model=RERANK_MODEL,
             thinking_level=RERANK_THINKING_LEVEL,
             timeout_s=60.0,
+            seed=RERANK_SEED,
         )
     except GeminiError:
         logger.warning(f"llm_rerank_failed concept_name={query.concept_name!r}")
