@@ -14,10 +14,10 @@ sys.path.insert(0, str(APP_ROOT))
 from agents.curriculum_search.logic import _cosine_similarities, resolve_grade_bands  # noqa: E402
 from agents.curriculum_search.schema import CurriculumChunk  # noqa: E402
 
-GOLDEN_PATH = REPO_ROOT / "curriculum-search-engine" / "RS-005_골든셋_라벨링_보정.csv"
+GOLDEN_PATH = REPO_ROOT / "curriculum-search-engine" / "RS-005_골든셋.csv"
 CHUNKS_PATH = APP_ROOT / "data" / "curriculum_units.json"
 CACHE_DIR = APP_ROOT / "data" / "embeddings_cache"
-ANSWER_COL = "정답_chunk_id(직접입력, 없으면 '없음')"
+ANSWER_COL = "chunk_id"
 
 MODELS = [
     "jhgan/ko-sroberta-multitask",
@@ -37,9 +37,10 @@ def load_answered_rows() -> list[dict]:
     with open(GOLDEN_PATH, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
     answered = []
-    for r in rows:
+    for i, r in enumerate(rows, start=2):
         answer = r[ANSWER_COL].strip()
-        if answer and answer != "없음" and "제외" not in answer:
+        if answer:
+            r["no"] = str(i)
             answered.append(r)
     return answered
 

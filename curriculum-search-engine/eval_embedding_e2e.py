@@ -41,20 +41,22 @@ async def _patched_embed_text(text: str) -> list[float]:
 
 _logic.embed_text = _patched_embed_text  # search_within_chunks가 참조하는 모듈 전역을 교체
 
-GOLDEN_PATH = REPO_ROOT / "curriculum-search-engine" / "RS-005_골든셋_라벨링_보정.csv"
+GOLDEN_PATH = REPO_ROOT / "curriculum-search-engine" / "RS-005_골든셋.csv"
 CHUNKS_PATH = APP_ROOT / "data" / "curriculum_units.json"
 EMBEDDING_CACHE = APP_ROOT / "data" / "embeddings_cache" / f"{MODEL_NAME.replace('/', '__')}.npz"
 RESULTS_PATH = APP_ROOT / "data" / f"eval_embedding_e2e_results_{MODEL_NAME.replace('/', '__')}.json"
-ANSWER_COL = "정답_chunk_id(직접입력, 없으면 '없음')"
+ANSWER_COL = "chunk_id"
 
 
 def load_answered_rows() -> list[dict]:
     with open(GOLDEN_PATH, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
-    return [
-        r for r in rows
-        if r[ANSWER_COL].strip() and r[ANSWER_COL].strip() != "없음" and "제외" not in r[ANSWER_COL]
-    ]
+    answered = []
+    for i, r in enumerate(rows, start=2):
+        if r[ANSWER_COL].strip():
+            r["no"] = str(i)
+            answered.append(r)
+    return answered
 
 
 def load_chunks_and_embeddings() -> tuple[list[CurriculumChunk], dict[str, np.ndarray]]:

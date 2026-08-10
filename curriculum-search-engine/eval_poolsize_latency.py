@@ -20,25 +20,32 @@ from agents.curriculum_search import logic as _logic  # noqa: E402
 from agents.curriculum_search.logic import resolve_grade_bands, search_within_chunks  # noqa: E402
 from agents.curriculum_search.schema import CurriculumChunk, SearchQuery  # noqa: E402
 
-_logic.RERANK_MODEL = "gemini-flash-lite-latest"  # 무료 티어 쿼터 제약, eval_prefilter_vs_llm_only.py와 동일 사유
+_logic.RERANK_MODEL = "gemini-3.6-flash"  # 프로덕션과 동일 모델(RS-007 §9.14 KoE5 재검증용)
 
 POOL_SIZE = int(sys.argv[1]) if len(sys.argv) > 1 else _logic.CANDIDATE_POOL_SIZE
 _logic.CANDIDATE_POOL_SIZE = POOL_SIZE
 
-GOLDEN_PATH = REPO_ROOT / "curriculum-search-engine" / "RS-005_골든셋_라벨링_보정.csv"
+THINKING_LEVEL = sys.argv[2] if len(sys.argv) > 2 else _logic.RERANK_THINKING_LEVEL
+_logic.RERANK_THINKING_LEVEL = THINKING_LEVEL
+
+GOLDEN_PATH = REPO_ROOT / "curriculum-search-engine" / "RS-005_골든셋.csv"
 CHUNKS_PATH = APP_ROOT / "data" / "curriculum_units.json"
-EMBEDDING_CACHE = APP_ROOT / "data" / "embeddings_cache" / "jhgan__ko-sroberta-multitask.npz"
-RESULTS_PATH = APP_ROOT / "data" / f"eval_poolsize_latency_results_pool{POOL_SIZE}.json"
-ANSWER_COL = "정답_chunk_id(직접입력, 없으면 '없음')"
+EMBEDDING_CACHE = APP_ROOT / "data" / "embeddings_cache" / "nlpai-lab__KoE5.npz"
+RESULTS_PATH = APP_ROOT / "data" / f"eval_poolsize_latency_results_pool{POOL_SIZE}_koe5_{THINKING_LEVEL}.json"
+ANSWER_COL = "chunk_id"
+# _logic.EMBEDDING_MODEL 기본값이 이미 "nlpai-lab/KoE5"라 embed_text()의 query:/passage:
+# 프리픽스 처리를 그대로 재사용한다(별도 패치 불필요).
 
 
 def load_answered_rows() -> list[dict]:
     with open(GOLDEN_PATH, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
-    return [
-        r for r in rows
-        if r[ANSWER_COL].strip() and r[ANSWER_COL].strip() != "없음" and "제외" not in r[ANSWER_COL]
-    ]
+    answered = []
+    for i, r in enumerate(rows, start=2):
+        if r[ANSWER_COL].strip():
+            r["no"] = str(i)
+            answered.append(r)
+    return answered
 
 
 def load_chunks_and_embeddings() -> tuple[list[CurriculumChunk], dict[str, np.ndarray]]:
