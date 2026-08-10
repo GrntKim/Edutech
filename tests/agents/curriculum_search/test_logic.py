@@ -7,10 +7,12 @@ import pytest
 from agents.curriculum_search import logic
 from agents.curriculum_search.logic import (
     CurriculumSearchError,
+    _assemble_results,
     _bigram_tokens,
     _cosine_similarities,
     _fetch_band_rows,
     _grade_band_weight,
+    _normalize_chunk_id,
     _reciprocal_rank_fusion,
     _RerankMatch,
     _RerankResponse,
@@ -222,6 +224,34 @@ class TestGradeBandWeight:
             _grade_band_weight(GradeBand.G5_6, GradeBand.G1_2)
         with pytest.raises(ValueError, match="grade_band 불변식 위반"):
             _grade_band_weight(GradeBand.G3_4, GradeBand.G1_2)
+
+
+class TestNormalizeChunkId:
+    def test_strips_surrounding_brackets(self):
+        assert _normalize_chunk_id("[6실05-04]") == "6실05-04"
+
+    def test_leaves_unbracketed_id_unchanged(self):
+        assert _normalize_chunk_id("6실05-04") == "6실05-04"
+
+    def test_strips_surrounding_whitespace(self):
+        assert _normalize_chunk_id("  6실05-04  ") == "6실05-04"
+
+
+class TestAssembleResults:
+    """2026-08-07 LangSmith 로그(a2-hybrid-search-acc4b991, 골든셋 42건 중 1건)에서
+    확인된 회귀: LLM이 achievement_code 표기 관례(대괄호)를 따라 chunk_id에 대괄호를
+    붙여 답하면, 후보 목록의 실제 chunk_id(대괄호 없음)와 매칭에 실패해 정답을 골랐음에도
+    조용히 0건으로 소멸했다(2026-08-10 5회 재현 시도로 상시 재현되지는 않는 저빈도
+    현상임을 확인, _assemble_results 정규화로 방어)."""
+
+    def test_bracketed_chunk_id_is_normalized_and_matched(self):
+        chunk = _make_chunk("6실05-04")
+        rerank = _RerankResponse(matches=[_RerankMatch(chunk_id="[6실05-04]", reasoning="근거")])
+
+        results = _assemble_results(rerank, [chunk], {"6실05-04": 0.9}, top_k=15)
+
+        assert [r.chunk.chunk_id for r in results] == ["6실05-04"]
+        assert results[0].rank == 1
 
 
 class TestSearchWithinChunks:

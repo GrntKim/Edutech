@@ -4,6 +4,7 @@ import re
 import threading
 
 import numpy as np
+from langsmith import traceable
 from pydantic import BaseModel
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
@@ -254,6 +255,10 @@ def _reciprocal_rank_fusion(*score_lists: list[float], k: int = RRF_K) -> list[f
 # GeminiError는 CurriculumSearchError로 다시 감싸지 않고 그대로 올린다 — 오케스트레이터의
 # 전역 예외 핸들러가 (GeminiError, DatabaseError)를 잡는데, CurriculumSearchError(RuntimeError
 # 직속)로 감싸면 이 핸들러를 못 타고 500으로 새어나간다(D 요청, orchestrate.py 통합 이슈).
+#
+# @traceable은 A2 개인 관찰가능성/eval 실험용이다(LANGSMITH_API_KEY 미설정 시 no-op —
+# 팀 공용 app/lib/gemini.py는 건드리지 않음, REQ-006 계약 범위 밖 개인 계측).
+@traceable(name="a2_llm_rerank", run_type="chain")
 def _llm_rerank_sync(query: SearchQuery, candidates: list[CurriculumChunk], top_k: int) -> _RerankResponse:
     prompt = build_rerank_prompt(query, candidates, top_k)
     try:
@@ -316,18 +321,31 @@ def _rank_candidates(
     return candidates, dense_by_chunk_id
 
 
+def _normalize_chunk_id(chunk_id: str) -> str:
+    """실제 chunk_id는 대괄호가 없지만("6실05-04"), 프롬프트가 후보를 보여줄 때
+    achievement_code 관례(대괄호 표기, "[6실05-04]")를 연상시키는 형태로 나열하다 보니
+    LLM이 드물게 대괄호를 붙여 답한다(2026-08-07 LangSmith 로그 골든셋 42건 중 1건 재현,
+    2026-08-10 반복 확인 시 5/5는 정상 — 상시 버그가 아니라 저빈도 샘플링 변동). 그 결과
+    실제로는 맞는 답을 골랐는데도 후속 조회가 실패해 조용히 0건으로 소멸했다. 비교 전에
+    양쪽을 정규화해 이 케이스를 흡수한다."""
+    return chunk_id.strip().strip("[]")
+
+
 def _assemble_results(
     rerank: _RerankResponse,
     candidates: list[CurriculumChunk],
     dense_by_chunk_id: dict[str, float],
     top_k: int,
 ) -> list[SearchResult]:
-    candidate_by_id = {chunk.chunk_id: chunk for chunk in candidates}
-    valid_matches = [match for match in rerank.matches if match.chunk_id in candidate_by_id]
+    candidate_by_normalized_id = {_normalize_chunk_id(chunk.chunk_id): chunk for chunk in candidates}
+    valid_matches = [
+        (candidate_by_normalized_id[normalized], match)
+        for match in rerank.matches
+        if (normalized := _normalize_chunk_id(match.chunk_id)) in candidate_by_normalized_id
+    ]
 
     results: list[SearchResult] = []
-    for rank, match in enumerate(valid_matches[:top_k], start=1):
-        chunk = candidate_by_id[match.chunk_id]
+    for rank, (chunk, match) in enumerate(valid_matches[:top_k], start=1):
         results.append(
             SearchResult(
                 chunk=chunk,
