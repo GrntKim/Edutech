@@ -32,19 +32,21 @@ from agents.curriculum_search.schema import CurriculumChunk, SearchQuery  # noqa
 # 프로덕션 RERANK_MODEL 설정은 건드리지 않는다.
 _logic.RERANK_MODEL = "gemini-flash-lite-latest"
 
-GOLDEN_PATH = REPO_ROOT / "curriculum-search-engine" / "RS-005_골든셋_라벨링_보정.csv"
+GOLDEN_PATH = REPO_ROOT / "curriculum-search-engine" / "RS-005_골든셋.csv"
 CHUNKS_PATH = APP_ROOT / "data" / "curriculum_units.json"
 EMBEDDING_CACHE = APP_ROOT / "data" / "embeddings_cache" / "jhgan__ko-sroberta-multitask.npz"
-ANSWER_COL = "정답_chunk_id(직접입력, 없으면 '없음')"
+ANSWER_COL = "chunk_id"
 
 
 def load_answered_rows() -> list[dict]:
     with open(GOLDEN_PATH, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
-    return [
-        r for r in rows
-        if r[ANSWER_COL].strip() and r[ANSWER_COL].strip() != "없음" and "제외" not in r[ANSWER_COL]
-    ]
+    answered = []
+    for i, r in enumerate(rows, start=2):
+        if r[ANSWER_COL].strip():
+            r["no"] = str(i)
+            answered.append(r)
+    return answered
 
 
 def load_chunks_and_embeddings() -> tuple[list[CurriculumChunk], dict[str, np.ndarray]]:
