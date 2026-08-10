@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from app.lib.types import MappingResult, PipelineContext, Subject, ValidationResult
@@ -85,7 +87,14 @@ class StageActivity(BaseModel):
     가진다. content_label이 그 행의 이름(표의 "학습내용" 칸)이다.
     """
 
-    content_label: str
+    content_label: Literal[
+        "전시학습 상기",
+        "학습 문제 안내하기",
+        "활동1",
+        "활동2",
+        "학습 내용 정리",
+        "차시예고",
+    ]
     time: str
     teacher: str
     student: str
@@ -186,6 +195,10 @@ class LessonOutput(BaseModel):
     topic: str
     subject: str
     achievement_code: str
+    # curriculum_chunks 원문 문장(AchievementStandard.statement)을 그대로 echo한다.
+    # 화면/문서에는 achievement_code(예: "[6실05-05]")와 나란히 붙여
+    # "[6실05-05] 인공지능이 만들어지는 과정을..."처럼 표시한다.
+    achievement_statement: str
     ai_digital_tool: str
     learning_objectives: list[str]
     materials: list[str]
