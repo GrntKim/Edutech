@@ -454,7 +454,9 @@ def render_lesson_docx(lesson: LessonOutput, worksheet_image: bytes | None = Non
         ("교육 대상 - 학년", f"{lesson.grade}학년"),
         ("학습 주제", lesson.topic),
         ("관련 과목(영역)", lesson.subject),
-        ("성취 기준", lesson.achievement_code),
+        # 웹 UI(result.html)는 코드 옆에 성취기준 원문을 나란히 보여주는데, 여기서
+        # achievement_code만 쓰면 DOCX로 내려받았을 때 한글 원문이 통째로 사라져 보인다.
+        ("성취 기준", f"{lesson.achievement_code} {lesson.achievement_statement}"),
         ("학습 목표", "\n".join(f"- {objective}" for objective in lesson.learning_objectives)),
         # "활용 자료"만 다음 줄에 오도록 라벨 자체에 줄바꿈을 넣는다.
         ("학습 준비물 및\n활용 자료", ", ".join(lesson.materials)),
