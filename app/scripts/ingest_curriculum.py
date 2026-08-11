@@ -24,6 +24,8 @@ SOURCE_FILES = [
     (RAW_DIR / "science_book.pdf", Subject.SCIENCE),
     (RAW_DIR / "domestic_science_book.pdf", Subject.DOMESTIC_SCIENCE),
     (RAW_DIR / "art_book.pdf", Subject.ART),
+    (RAW_DIR / "social_book.pdf", Subject.SOCIAL),
+    (RAW_DIR / "korean_book.pdf", Subject.KOREAN),
 ]
 
 _ELEMENTARY_GRADE_BANDS = {
@@ -57,6 +59,17 @@ _CONSIDERATION_HEADER_RE = re.compile(r"^\(나\)\s*성취기준\s*적용")
 _INQUIRY_HEADER = "<탐구 활동>"
 _BULLET_CODE_RE = re.compile(r"^[•·]\s*\[([^\]]+)\]\s*(.*)$")
 _BULLET_RE = re.compile(r"^[•·]\s*(.*)$")
+
+# 성취기준 코드 표기에 en-dash(–)/em-dash(—)가 hyphen(-) 대신 섞여 나오는 경우가 있다
+# (예: 사회과 PDF의 [4사01–01], [4사01–02] — 같은 문서 내 다른 337개 코드는 전부 hyphen).
+# 코드가 achievement 줄과 (가) 성취기준 해설 불릿 양쪽에서 각각 파싱되는데, 정규화 없이
+# 문자 그대로 dict key/lookup에 쓰면 두 줄의 코드 문자열이 달라져 해설이 조용히 누락된다
+# (에러 없이 `code in records`가 False로만 나옴). 코드 추출 시점에 항상 정규화해 이를 막는다.
+_DASH_VARIANTS_RE = re.compile(r"[–—]")
+
+
+def _normalize_code(code: str) -> str:
+    return _DASH_VARIANTS_RE.sub("-", code)
 _PAGE_NUM_RE = re.compile(r"^\d+$")
 
 
@@ -133,6 +146,7 @@ def _apply_achievement_line(
     achievement_match = _ACHIEVEMENT_RE.match(line)
     if achievement_match:
         code, text = achievement_match.groups()
+        code = _normalize_code(code)
         records[code] = {
             "chunk_id": code,
             "subject": subject,
@@ -187,6 +201,7 @@ def _apply_explanation_line(
     bullet_match = _BULLET_CODE_RE.match(line)
     if bullet_match:
         code, text = bullet_match.groups()
+        code = _normalize_code(code)
         if code in records:
             records[code]["explanation"] = text.strip()
         return code
