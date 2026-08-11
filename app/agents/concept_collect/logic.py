@@ -1,3 +1,5 @@
+import logging
+
 from app.lib.types import (
     ConceptInput,
     StructuredConcept,
@@ -17,6 +19,11 @@ from app.agents.concept_collect.prompts import (
 )
 
 PROMPT_VERSION = "v1.1"
+
+logger = logging.getLogger(__name__)
+
+# A2 검색 요청 건수. 측정 기록이 top_k=15 기준이라 명시한다
+TOP_K = 15
 
 # ambiguous_input 판정용 (LLM 호출 전, 쿼터 미소모)
 BROAD_TERMS = frozenset({
@@ -67,7 +74,7 @@ def analyze_concept(
                 concept_name=concept_input.raw_concept_name.strip(),
                 concept_definition="",
                 target_grade=context.target_grade,
-                top_k=15,
+                top_k=TOP_K,
             ),
             model_version=DEFAULT_MODEL,
             prompt_version=PROMPT_VERSION,
@@ -85,13 +92,29 @@ def analyze_concept(
             StructuredConcept,
             prompt_version=PROMPT_VERSION,
         )
-    except GeminiSchemaError:
+    except GeminiSchemaError as exc:
         retry_count += 1
-        concept = generate_structured(
-            prompt,
-            StructuredConcept,
-            prompt_version=PROMPT_VERSION,
+        # C와 동일하게 실패 이유를 프롬프트에 덧붙여 같은 실패 반복을 줄인다
+        retry_prompt = (
+            f"{prompt}\n\n"
+            "## 직전 시도 실패\n"
+            f"- {exc}\n"
+            "- 위 오류를 피해 스키마에 맞는 JSON만 출력하세요.\n"
         )
+        try:
+            concept = generate_structured(
+                retry_prompt,
+                StructuredConcept,
+                prompt_version=PROMPT_VERSION,
+            )
+        except GeminiSchemaError as retry_exc:
+            logger.error(
+                "A1 1단계 구조화 2회 실패: concept=%s, prompt_version=%s, error=%s",
+                concept_input.raw_concept_name,
+                PROMPT_VERSION,
+                retry_exc,
+            )
+            raise
 
     # 도메인 범위 검사 (AI 개념이 아니면 즉시 반환)
     if not concept.is_ai_concept:
@@ -101,7 +124,7 @@ def analyze_concept(
                 concept_name=concept.concept_name,
                 concept_definition="",
                 target_grade=context.target_grade,
-                top_k=15,
+                top_k=TOP_K,
             ),
             model_version=DEFAULT_MODEL,
             prompt_version=PROMPT_VERSION,
@@ -128,7 +151,7 @@ def analyze_concept(
         concept_name=concept.concept_name,
         concept_definition=definition,
         target_grade=context.target_grade,
-        top_k=15,
+        top_k=TOP_K,
     )
 
     return ConceptCollectResult(
