@@ -19,6 +19,7 @@ sys.path.insert(0, str(APP_ROOT))
 from agents.curriculum_search import logic as _logic  # noqa: E402
 from agents.curriculum_search.logic import resolve_grade_bands, search_within_chunks  # noqa: E402
 from agents.curriculum_search.schema import CurriculumChunk, SearchQuery  # noqa: E402
+from eval_cache_utils import corpus_fingerprint, load_cached_results, save_results  # noqa: E402
 
 _logic.RERANK_MODEL = "gemini-3.6-flash"  # 프로덕션과 동일 모델(RS-007 §9.14 KoE5 재검증용)
 
@@ -75,10 +76,10 @@ async def main() -> None:
     all_chunks, emb_by_id = load_chunks_and_embeddings()
     print(f"CANDIDATE_POOL_SIZE={_logic.CANDIDATE_POOL_SIZE}, 평가 대상(있음) 행: {len(rows)}개\n")
 
-    done = {}
-    if RESULTS_PATH.exists():
-        done = {r["no"]: r for r in json.loads(RESULTS_PATH.read_text(encoding="utf-8"))}
-        print(f"이전 결과 {len(done)}개 재사용\n")
+    fingerprint = corpus_fingerprint(CHUNKS_PATH)
+    done = load_cached_results(RESULTS_PATH, fingerprint)
+    if done:
+        print(f"이전 결과 {len(done)}개 재사용(코퍼스 지문 일치 확인됨)\n")
 
     all_results = list(done.values())
 
@@ -103,7 +104,7 @@ async def main() -> None:
         print(f"no.{no} {concept}(g{grade}, 후보 {len(candidate_chunks)}개) | hit: {'O' if hit else 'X'} ({elapsed:.2f}s)")
 
         all_results.append({"no": no, "concept": concept, "grade": grade, "hit": hit, "elapsed": elapsed})
-        RESULTS_PATH.write_text(json.dumps(all_results, ensure_ascii=False, indent=2), encoding="utf-8")
+        save_results(RESULTS_PATH, fingerprint, all_results)
 
     n = len(all_results)
     hits = sum(r["hit"] for r in all_results)
