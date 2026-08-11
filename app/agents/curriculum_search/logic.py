@@ -1,7 +1,22 @@
 import asyncio
 import logging
+import os
 import re
 import threading
+
+# sentence_transformers import 전에 설정해야 huggingface_hub가 이 값을 읽는다
+# (huggingface_hub.constants가 모듈 로드 시점에 환경변수를 읽어 상수로 굳힘).
+# 모델(EMBEDDING_MODEL, 아래)이 버전 고정이라 "최신 버전 확인" 네트워크 호출이
+# 원천적으로 불필요한데, 이 호출들이 콜드스타트 지연의 상당 부분을 차지함이
+# 실측으로 확인됨(2026-08-11, huggingface.co 메타데이터 조회만으로 ~9s 중 ~5.75s
+# 소요 — Gemini 리랭킹 호출 자체는 4.6s로 정상). setdefault라 배포 환경이 이미
+# 다른 값을 설정했다면 그걸 존중한다.
+#
+# 주의: 이 값은 로컬에 모델이 이미 캐시돼 있다는 걸 전제한다 — Cloud Run처럼
+# 이미지에 모델을 미리 구워두지 않은 배포 환경의 "진짜 첫" 콜드스타트(로컬 캐시
+# 자체가 없는 경우)에서는 오히려 다운로드가 막혀 실패한다. Dockerfile에 빌드
+# 시점 모델 프리다운로드를 추가하기 전까지는 그 환경에서 이 값을 걷어내야 한다.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import numpy as np
 from langsmith import traceable
