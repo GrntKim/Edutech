@@ -4,6 +4,7 @@ import re
 import threading
 
 import numpy as np
+from langsmith import traceable
 from pydantic import BaseModel
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
@@ -44,6 +45,12 @@ RERANK_MODEL = "gemini-3.6-flash"
 # 명시한다. thinking_level은 추론 "강도"이지 temperature처럼 무작위성을 제어하지는 않는다 —
 # 리랭킹 비결정성 자체는 여전히 남음(§4 리스크 "LLM 리랭킹의 비결정성" 참고).
 RERANK_THINKING_LEVEL = "low"
+
+# 2026-08-10: 동일 입력에 대해 실행마다 리랭킹 결과가 달라지는 문제(L1-a/L2-a)의
+# 완화 시도로 고정 seed를 도입. SDK 문서상 "최선 노력" 재현이라 완전한 결정성은
+# 보장되지 않지만, 매번 임의 시드를 쓰던 기존 상태보다는 변동을 줄일 것으로 기대.
+# 값 자체엔 의미 없음 — 그냥 고정된 정수.
+RERANK_SEED = 42
 
 # grade_band 필터만으로는 최대 262개 청크가 그대로 통과한다(GRADE_TO_BANDS가 누적 구조라
 # 5~6학년 질의는 전체 코퍼스와 동일). 청크 하나당 평균 900자 안팎이라 전부 LLM에 넘기면
@@ -254,6 +261,10 @@ def _reciprocal_rank_fusion(*score_lists: list[float], k: int = RRF_K) -> list[f
 # GeminiError는 CurriculumSearchError로 다시 감싸지 않고 그대로 올린다 — 오케스트레이터의
 # 전역 예외 핸들러가 (GeminiError, DatabaseError)를 잡는데, CurriculumSearchError(RuntimeError
 # 직속)로 감싸면 이 핸들러를 못 타고 500으로 새어나간다(D 요청, orchestrate.py 통합 이슈).
+#
+# @traceable은 A2 개인 관찰가능성/eval 실험용이다(LANGSMITH_API_KEY 미설정 시 no-op —
+# 팀 공용 app/lib/gemini.py는 건드리지 않음, REQ-006 계약 범위 밖 개인 계측).
+@traceable(name="a2_llm_rerank", run_type="chain")
 def _llm_rerank_sync(query: SearchQuery, candidates: list[CurriculumChunk], top_k: int) -> _RerankResponse:
     prompt = build_rerank_prompt(query, candidates, top_k)
     try:
@@ -263,6 +274,7 @@ def _llm_rerank_sync(query: SearchQuery, candidates: list[CurriculumChunk], top_
             model=RERANK_MODEL,
             thinking_level=RERANK_THINKING_LEVEL,
             timeout_s=60.0,
+            seed=RERANK_SEED,
         )
     except GeminiError:
         logger.warning(f"llm_rerank_failed concept_name={query.concept_name!r}")
@@ -316,18 +328,31 @@ def _rank_candidates(
     return candidates, dense_by_chunk_id
 
 
+def _normalize_chunk_id(chunk_id: str) -> str:
+    """실제 chunk_id는 대괄호가 없지만("6실05-04"), 프롬프트가 후보를 보여줄 때
+    achievement_code 관례(대괄호 표기, "[6실05-04]")를 연상시키는 형태로 나열하다 보니
+    LLM이 드물게 대괄호를 붙여 답한다(2026-08-07 LangSmith 로그 골든셋 42건 중 1건 재현,
+    2026-08-10 반복 확인 시 5/5는 정상 — 상시 버그가 아니라 저빈도 샘플링 변동). 그 결과
+    실제로는 맞는 답을 골랐는데도 후속 조회가 실패해 조용히 0건으로 소멸했다. 비교 전에
+    양쪽을 정규화해 이 케이스를 흡수한다."""
+    return chunk_id.strip().strip("[]")
+
+
 def _assemble_results(
     rerank: _RerankResponse,
     candidates: list[CurriculumChunk],
     dense_by_chunk_id: dict[str, float],
     top_k: int,
 ) -> list[SearchResult]:
-    candidate_by_id = {chunk.chunk_id: chunk for chunk in candidates}
-    valid_matches = [match for match in rerank.matches if match.chunk_id in candidate_by_id]
+    candidate_by_normalized_id = {_normalize_chunk_id(chunk.chunk_id): chunk for chunk in candidates}
+    valid_matches = [
+        (candidate_by_normalized_id[normalized], match)
+        for match in rerank.matches
+        if (normalized := _normalize_chunk_id(match.chunk_id)) in candidate_by_normalized_id
+    ]
 
     results: list[SearchResult] = []
-    for rank, match in enumerate(valid_matches[:top_k], start=1):
-        chunk = candidate_by_id[match.chunk_id]
+    for rank, (chunk, match) in enumerate(valid_matches[:top_k], start=1):
         results.append(
             SearchResult(
                 chunk=chunk,

@@ -6,6 +6,7 @@ LLM Prompt Builder
 
 from app.lib.types import StructuredConcept, SearchResult
 
+
 SYSTEM_PROMPT = """
 You are an expert in mapping AI concepts to the Korean elementary curriculum.
 
@@ -29,11 +30,24 @@ Rules:
 10. Write the "analogy" field in Korean, as ONE natural flowing explanation (not
     labeled/bulleted) that connects exactly three parts in this order:
     (1) what the student actually does in a real activity of the chosen curriculum
-        unit, (2) the principle the student discovers through that activity, and
-        (3) how AI carries out the same principle mechanically. For part (3), do not
-        stop at a vague statement like "AI does this too" — concretely describe what
-        input AI receives and what feature/criterion/calculation it uses to make its
-        judgment, at a level an elementary student can understand.
+    unit, (2) the principle the student discovers through that activity, and
+    (3) how AI carries out the same principle mechanically. For part (3), do not
+    stop at a vague statement like "AI does this too" — concretely describe what
+    input AI receives and what feature/criterion/calculation it uses to make its
+    judgment, at a level an elementary student can understand.
+11. Write mapping_reason and analogy in Korean. All other output stays as specified below.
+12. mapping_reason is passed downstream to the lesson-generation agent, which uses it as the
+    logical backbone of the entire lesson. Do not write a generic justification like "similarity
+    score is high." State concretely which activity in this chunk (inquiry_activities or
+    achievement_text) corresponds to which part of the AI concept (core_mechanism or
+    key_operations).
+13. analogy must contain three parts, in order, and each part must be identifiable in the text:
+    (1) what the student concretely does in the curriculum activity,
+    (2) the principle that activity reveals,
+    (3) HOW the AI mechanically performs that same principle — not just "AI does this too."
+    Part 3 is the point of the analogy: describe the AI's mechanical processing at a level an
+    elementary student can grasp (e.g. "computers have no eyes, so they must receive the criteria as numbers").
+    An analogy that ends at "AI also classifies things" without explaining the mechanism fails this rule.
 """
 
 
@@ -77,7 +91,6 @@ def build_user_prompt(
     search_results: list[SearchResult],
     target_grade: int,
 ) -> str:
-
     candidates = "\n\n".join(
         [
             f"========== Candidate {i+1} ==========\n{format_candidate(r)}"
@@ -126,24 +139,26 @@ Evaluate candidates using:
 
 # Output Format
 
-Return JSON only. "analogy" must follow Rule 10 (student activity -> discovered
-principle -> AI's mechanical process, in Korean, one flowing explanation), for example:
+Return JSON only.
 
-  "학생이 동물을 다리 개수와 사는 곳 같은 특징으로 나누어 무리를 짓다 보면, 비슷한 특징을 \
-가진 대상끼리 묶인다는 분류 원리를 발견하게 됩니다. AI도 이와 똑같이, 데이터마다 특징값을 \
-입력받아 정해진 기준(예: 특징값 사이의 거리)으로 얼마나 비슷한지 계산한 뒤, 가장 가까운 \
-것끼리 자동으로 묶는 방식으로 분류를 수행합니다."
+"analogy" must follow Rule 10:
+student activity -> discovered principle -> AI's mechanical process,
+in Korean, as one natural flowing explanation.
+
+"mapping_reason" must follow Rule 12:
+explain concretely which curriculum activity corresponds to which part
+of the AI concept, rather than giving a generic similarity-based reason.
 
 {{
-  "chunk_id": "...",
-  "mapping_reason": "...",
-  "analogy": "...",
-  "criteria_scores": {{
-      "semantic_similarity": 0.0,
-      "educational_fit": 0.0,
-      "student_level": 0.0,
-      "analogy": 0.0,
-      "achievement_alignment": 0.0
-  }}
+    "chunk_id": "...",
+    "mapping_reason": "...",
+    "analogy": "...",
+    "criteria_scores": {{
+        "semantic_similarity": 0.0,
+        "educational_fit": 0.0,
+        "student_level": 0.0,
+        "analogy": 0.0,
+        "achievement_alignment": 0.0
+    }}
 }}
 """

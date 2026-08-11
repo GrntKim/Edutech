@@ -10,4 +10,9 @@ service-account*.json
 *.log
 app/data/raw/
 app/data/embeddings_cache/
+app/data/eval_*results*.json
+app/data/archive_lite_model_results/
+app/data/archive_old_goldenset33/
+app/data/grade_weight_sweep/
 .DS_Store
+.tmpfiles/

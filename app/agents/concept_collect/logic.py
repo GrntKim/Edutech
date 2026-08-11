@@ -5,13 +5,18 @@ from app.lib.types import (
     SearchQuery,
     PipelineContext,
 )
-from app.lib.gemini import generate_structured, generate_text, GeminiSchemaError
+from app.lib.gemini import (
+    generate_structured,
+    generate_text,
+    GeminiSchemaError,
+    DEFAULT_MODEL,
+)
 from app.agents.concept_collect.prompts import (
     CONCEPT_ANALYSIS_PROMPT,
     QUERY_REWRITE_PROMPT,
 )
 
-PROMPT_VERSION = "v1.0"
+PROMPT_VERSION = "v1.1"
 
 # ambiguous_input 판정용 (LLM 호출 전, 쿼터 미소모)
 BROAD_TERMS = frozenset({
@@ -64,7 +69,7 @@ def analyze_concept(
                 target_grade=context.target_grade,
                 top_k=15,
             ),
-            model_version="gemini-3.6-flash",
+            model_version=DEFAULT_MODEL,
             prompt_version=PROMPT_VERSION,
             retry_count=0,
             status="ambiguous_input",
@@ -98,7 +103,7 @@ def analyze_concept(
                 target_grade=context.target_grade,
                 top_k=15,
             ),
-            model_version="gemini-3.6-flash",
+            model_version=DEFAULT_MODEL,
             prompt_version=PROMPT_VERSION,
             retry_count=retry_count,
             status="unsupported_concept",
@@ -111,11 +116,17 @@ def analyze_concept(
         prerequisite_ideas=", ".join(concept.prerequisite_ideas),
         target_grade=context.target_grade,
     )
-    definition = generate_text(rewrite_prompt)
+    definition = generate_text(rewrite_prompt).strip()
+    if not definition:
+        retry_count += 1
+        definition = generate_text(rewrite_prompt).strip()
+    if not definition:
+        # 빈 쿼리는 A2 검색이 성립하지 않으므로 개념명으로 대체
+        definition = concept.concept_name
 
     search_query = SearchQuery(
         concept_name=concept.concept_name,
-        concept_definition=definition.strip(),
+        concept_definition=definition,
         target_grade=context.target_grade,
         top_k=15,
     )
@@ -123,7 +134,7 @@ def analyze_concept(
     return ConceptCollectResult(
         concept=concept,
         search_query=search_query,
-        model_version="gemini-3.6-flash",
+        model_version=DEFAULT_MODEL,
         prompt_version=PROMPT_VERSION,
         retry_count=retry_count,
         status="success",
