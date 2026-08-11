@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>마이페이지 - Edutech</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
+        <nav class="site-nav">
+            <span>{{ user.name }}님</span>
+            <form method="post" action="/logout" style="display:inline">
+                <button type="submit">로그아웃</button>
+            </form>
+        </nav>
+    </header>
+    <main>
+        <h1>생성 히스토리</h1>
+
+        {% if items %}
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>개념</th>
+                    <th>학년</th>
+                    <th>검증 상태</th>
+                    <th>생성 시각</th>
+                    <th></th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>{{ item.concept_name }}</td>
+                    <td>{{ item.target_grade }}학년</td>
+                    <td>{{ item.validation_status }}</td>
+                    <td>{{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                    <td><a href="/mypage/requests/{{ item.id }}">상세보기</a></td>
+                    <td>
+                        <form method="post" action="/mypage/requests/{{ item.id }}/delete"
+                              onsubmit="return confirm('이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.');">
+                            <button type="submit">삭제</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="pagination">
+            {% if page > 1 %}
+            <a href="/mypage?page={{ page - 1 }}">이전</a>
+            {% endif %}
+            <span>{{ page }} / {{ total_pages }}</span>
+            {% if page < total_pages %}
+            <a href="/mypage?page={{ page + 1 }}">다음</a>
+            {% endif %}
+        </div>
+        {% else %}
+        <p>아직 생성한 교안이 없습니다. <a href="/">교안 생성하러 가기</a></p>
+        {% endif %}
+    </main>
+    <footer class="site-footer">
+        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
+    </footer>
+</body>
+</html>

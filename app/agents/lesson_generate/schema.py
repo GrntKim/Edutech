@@ -12,11 +12,13 @@ _SUBJECT_LABELS = {
     "SCIENCE": "과학",
     "DOMESTIC_SCIENCE": "실과",
     "ART": "미술",
+    "SOCIAL": "사회",
+    "KOREAN": "국어",
 }
 
 
 def subject_label(subject: Subject) -> str:
-    """B가 넘겨준 Subject(MATH/SCIENCE/DOMESTIC_SCIENCE/ART) enum을 한글 라벨로 변환한다."""
+    """B가 넘겨준 Subject(MATH/SCIENCE/DOMESTIC_SCIENCE/ART/SOCIAL/KOREAN) enum을 한글 라벨로 변환한다."""
     key = getattr(subject, "value", subject)
     return _SUBJECT_LABELS.get(key, str(key))
 
