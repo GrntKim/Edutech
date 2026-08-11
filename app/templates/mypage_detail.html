@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ item.concept_name }} - Edutech</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
+        <nav class="site-nav">
+            <a href="/mypage">마이페이지</a>
+            <form method="post" action="/logout" style="display:inline">
+                <button type="submit">로그아웃</button>
+            </form>
+        </nav>
+    </header>
+    <main>
+        <p><a href="/mypage">&larr; 목록으로</a></p>
+        <h1>{{ item.concept_name }} ({{ item.target_grade }}학년)</h1>
+        <p>검증 상태: {{ item.validation_status }}</p>
+        <p>생성 시각: {{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
+
+        <form method="post" action="/mypage/requests/{{ item.id }}/redownload" style="display:inline">
+            <button type="submit" class="download-btn">DOCX 재출력</button>
+        </form>
+        <form method="post" action="/mypage/requests/{{ item.id }}/delete" style="display:inline"
+              onsubmit="return confirm('이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.');">
+            <button type="submit">삭제</button>
+        </form>
+
+        {% set lesson = item.lesson_output %}
+        {% set warning = None %}
+        {% set docx_name = None %}
+        {% include "result.html" %}
+    </main>
+    <footer class="site-footer">
+        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
+    </footer>
+</body>
+</html>

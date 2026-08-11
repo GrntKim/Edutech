@@ -1,4 +1,7 @@
+from datetime import datetime
 from enum import Enum
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -132,3 +135,46 @@ class PipelineResult(BaseModel):
     lesson_plan: dict
     validation: ValidationResult
     warning: str | None = None
+
+
+# 소유: E(REQ-006)
+class User(BaseModel):
+    id: UUID
+    email: str
+    password_hash: str
+    name: str
+    role: Literal["user", "admin"]
+    created_at: datetime
+
+
+# 소유: E(REQ-006)
+class Session(BaseModel):
+    id: str
+    user_id: UUID
+    created_at: datetime
+    expires_at: datetime
+
+
+# 소유: E(REQ-006)
+class LessonRequest(BaseModel):
+    id: UUID
+    user_id: UUID
+    concept_name: str
+    target_grade: int
+    subject_hint: str | None = None
+    mapped_curriculum_code: str | None = None
+    # 기존 DOCX 생성 함수(render_lesson_docx)가 바로 소비할 수 있는 완전한
+    # LessonOutput 구조를 그대로 저장한다 — 재출력 시 파이프라인 재실행 없이
+    # 이 dict를 LessonOutput(**lesson_output)에 넣기만 하면 된다.
+    lesson_output: dict
+    validation_status: str
+    created_at: datetime
+
+
+# 소유: E(REQ-006)
+class RateLimitStatus(BaseModel):
+    allowed: bool
+    daily_used: int
+    daily_limit: int
+    weekly_used: int
+    weekly_limit: int
