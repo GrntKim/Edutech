@@ -3,6 +3,10 @@
 실제 DB에 붙지 않고 psycopg.connect를 가짜 Connection/Cursor로 대체해 검증한다.
 """
 
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+import psycopg
 import pytest
 
 from app.lib import db
@@ -12,10 +16,11 @@ from app.lib.types import Subject
 class _FakeCursor:
     """psycopg 3 Cursor의 최소 동작(컨텍스트 매니저 + execute/fetch)을 흉내낸다."""
 
-    def __init__(self, fetchone_result=None, fetchall_result=None):
+    def __init__(self, fetchone_result=None, fetchall_result=None, rowcount=0):
         self.executed: list[tuple[str, object]] = []
         self._fetchone_result = fetchone_result
         self._fetchall_result = [] if fetchall_result is None else fetchall_result
+        self.rowcount = rowcount
 
     def __enter__(self):
         return self
@@ -257,6 +262,159 @@ def test_chunk_by_code_normalizes_brackets(monkeypatch):
     params_with = cursor_with_brackets.executed[0][1]
     params_without = cursor_without_brackets.executed[0][1]
     assert params_with == params_without == ("[4과02-01]",)
+
+
+# ---------- 계정 · 세션 · 히스토리 (E, REQ-006) ----------
+
+
+class _RaisingCursor(_FakeCursor):
+    """execute()가 지정된 예외를 던지는 가짜 커서. UniqueViolation 같은 DB 제약
+    위반 경로를 실제 접속 없이 재현하기 위함."""
+
+    def __init__(self, exc: Exception):
+        super().__init__()
+        self._exc = exc
+
+    def execute(self, query, params=None):
+        raise self._exc
+
+
+def _user_row(**overrides):
+    row = {
+        "id": uuid4(),
+        "email": "a@b.com",
+        "password_hash": "hashed",
+        "name": "테스트",
+        "role": "user",
+        "created_at": datetime.now(timezone.utc),
+    }
+    row.update(overrides)
+    return row
+
+
+def test_create_user_returns_user(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_user_row())
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    user = db.create_user("a@b.com", "hashed", "테스트")
+
+    assert user.email == "a@b.com"
+    assert user.role == "user"
+
+
+def test_create_user_duplicate_email_raises_domain_error(monkeypatch):
+    _set_valid_env(monkeypatch)
+    unique_violation = psycopg.errors.UniqueViolation("duplicate key")
+    cursor = _RaisingCursor(unique_violation)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    with pytest.raises(db.EmailAlreadyExistsError):
+        db.create_user("dup@b.com", "hashed", "테스트")
+
+
+def test_get_user_by_email_returns_none_when_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.get_user_by_email("nobody@b.com") is None
+
+
+def test_count_lesson_requests_since_uses_rolling_window(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 3})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    result = db.count_lesson_requests_since(user_id, timedelta(days=1))
+
+    query, params = cursor.executed[0]
+    assert "now() - %s" in query
+    assert "created_at >" in query
+    assert params == (user_id, timedelta(days=1))
+    assert result == 3
+
+
+def test_list_lesson_requests_orders_desc_and_paginates(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    db.list_lesson_requests(user_id, limit=10, offset=20)
+
+    query, params = cursor.executed[0]
+    assert "ORDER BY created_at DESC" in query
+    assert params == (user_id, 10, 20)
+
+
+def test_get_lesson_request_by_id_returns_none_when_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.get_lesson_request_by_id(uuid4()) is None
+
+
+def test_delete_lesson_request_soft_deletes_scoped_to_owner(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(rowcount=1)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    request_id = uuid4()
+    user_id = uuid4()
+
+    result = db.delete_lesson_request(request_id, user_id)
+
+    query, params = cursor.executed[0]
+    assert "UPDATE lesson_requests" in query
+    assert "SET deleted_at = now()" in query
+    assert "user_id = %s" in query
+    assert params == (request_id, user_id)
+    assert result is True
+
+
+def test_delete_lesson_request_returns_false_when_not_owner_or_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(rowcount=0)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.delete_lesson_request(uuid4(), uuid4()) is False
+
+
+def test_count_lesson_requests_since_does_not_filter_deleted_at(monkeypatch):
+    """레이트리밋 카운트는 삭제된(soft-delete) 행도 세야 한다 — 안 그러면
+    삭제→재생성으로 일/주 한도를 무력화할 수 있다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 3})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.count_lesson_requests_since(uuid4(), timedelta(days=1))
+
+    query, _ = cursor.executed[0]
+    assert "deleted_at" not in query
+
+
+def test_list_lesson_requests_excludes_deleted(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.list_lesson_requests(uuid4(), limit=10, offset=0)
+
+    query, _ = cursor.executed[0]
+    assert "deleted_at IS NULL" in query
+
+
+def test_get_lesson_request_by_id_excludes_deleted(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.get_lesson_request_by_id(uuid4())
+
+    query, _ = cursor.executed[0]
+    assert "deleted_at IS NULL" in query
 
 
 # ---------- 공통: embedding 컬럼 제외 ----------

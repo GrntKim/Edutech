@@ -26,8 +26,20 @@ import psycopg
 from pgvector.psycopg import register_vector
 from psycopg import Connection, Cursor
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
-from app.lib.types import CurriculumChunk, GradeBand, Subject, grade_to_bands
+from datetime import datetime, timedelta
+from uuid import UUID
+
+from app.lib.types import (
+    CurriculumChunk,
+    GradeBand,
+    LessonRequest,
+    Session,
+    Subject,
+    User,
+    grade_to_bands,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +63,10 @@ class DatabaseConfigError(DatabaseError):
 
 class DatabaseConnectionError(DatabaseError):
     """접속 실패(접속 자체 또는 pgvector 확장 등록 실패)."""
+
+
+class EmailAlreadyExistsError(DatabaseError):
+    """이미 가입된 이메일로 회원가입 시도."""
 
 
 def _resolve_conninfo() -> dict[str, str | int]:
@@ -216,3 +232,166 @@ def get_scope_summary() -> list[tuple[Subject, GradeBand, int]]:
         (Subject(row["subject"]), GradeBand(row["grade_band"]), row["chunk_count"])
         for row in rows
     ]
+
+
+# ── 계정 · 세션 · 히스토리 (E, REQ-006) ──────────────────────────
+
+
+def create_user(email: str, password_hash: str, name: str, role: str = "user") -> User:
+    """계정 생성. email UNIQUE 위반 시 psycopg.errors.UniqueViolation이 그대로 올라간다
+    (호출부가 "이미 가입된 이메일" 문구로 변환)."""
+    query = (
+        "INSERT INTO users (email, password_hash, name, role) "
+        "VALUES (%s, %s, %s, %s) "
+        "RETURNING id, email, password_hash, name, role, created_at"
+    )
+    try:
+        with get_cursor(dict_rows=True) as cur:
+            cur.execute(query, (email, password_hash, name, role))
+            row = cur.fetchone()
+    except psycopg.errors.UniqueViolation as exc:
+        raise EmailAlreadyExistsError(f"이미 가입된 이메일입니다: {email}") from exc
+    return User(**row)
+
+
+def get_user_by_email(email: str) -> User | None:
+    query = "SELECT id, email, password_hash, name, role, created_at FROM users WHERE email = %s"
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (email,))
+        row = cur.fetchone()
+    return User(**row) if row is not None else None
+
+
+def get_user_by_id(user_id: UUID) -> User | None:
+    query = "SELECT id, email, password_hash, name, role, created_at FROM users WHERE id = %s"
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (user_id,))
+        row = cur.fetchone()
+    return User(**row) if row is not None else None
+
+
+def create_session(session_id: str, user_id: UUID, expires_at: datetime) -> None:
+    query = "INSERT INTO sessions (id, user_id, expires_at) VALUES (%s, %s, %s)"
+    with get_cursor() as cur:
+        cur.execute(query, (session_id, user_id, expires_at))
+
+
+def get_session(session_id: str) -> Session | None:
+    query = "SELECT id, user_id, created_at, expires_at FROM sessions WHERE id = %s"
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (session_id,))
+        row = cur.fetchone()
+    return Session(**row) if row is not None else None
+
+
+def delete_session(session_id: str) -> None:
+    with get_cursor() as cur:
+        cur.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
+
+
+def count_lesson_requests_since(user_id: UUID, window: timedelta) -> int:
+    """롤링 윈도우 카운트. 캘린더 자정 리셋이 아니라 now() - window 기준
+    (레이트리밋 경계 우회 방지). 삭제된(soft-delete) 행도 일부러 그대로 센다 —
+    안 그러면 사용자가 삭제→재생성을 반복해 레이트리밋을 무력화할 수 있다."""
+    query = (
+        "SELECT count(*) AS n FROM lesson_requests "
+        "WHERE user_id = %s AND created_at > now() - %s"
+    )
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (user_id, window))
+        row = cur.fetchone()
+    return row["n"]
+
+
+def create_lesson_request(
+    user_id: UUID,
+    concept_name: str,
+    target_grade: int,
+    subject_hint: str | None,
+    mapped_curriculum_code: str | None,
+    lesson_output: dict,
+    validation_status: str,
+) -> LessonRequest:
+    """이 INSERT 자체가 레이트리밋 카운트 대상이다(count_lesson_requests_since가
+    이 테이블을 그대로 세므로 별도 카운터 컬럼 불필요). 파이프라인이 검증까지
+    끝나 재출력 가능한 lesson_output이 나왔을 때만 호출한다 — 조기 종료
+    (unsupported_concept 등, lesson_plan={})는 저장하지 않는다."""
+    query = (
+        "INSERT INTO lesson_requests "
+        "(user_id, concept_name, target_grade, subject_hint, mapped_curriculum_code, "
+        "lesson_output, validation_status) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+        "RETURNING id, user_id, concept_name, target_grade, subject_hint, "
+        "mapped_curriculum_code, lesson_output, validation_status, created_at"
+    )
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(
+            query,
+            (
+                user_id,
+                concept_name,
+                target_grade,
+                subject_hint,
+                mapped_curriculum_code,
+                Jsonb(lesson_output),
+                validation_status,
+            ),
+        )
+        row = cur.fetchone()
+    return LessonRequest(**row)
+
+
+def list_lesson_requests(user_id: UUID, limit: int, offset: int) -> list[LessonRequest]:
+    query = (
+        "SELECT id, user_id, concept_name, target_grade, subject_hint, "
+        "mapped_curriculum_code, lesson_output, validation_status, created_at "
+        "FROM lesson_requests WHERE user_id = %s AND deleted_at IS NULL "
+        "ORDER BY created_at DESC LIMIT %s OFFSET %s"
+    )
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (user_id, limit, offset))
+        rows = cur.fetchall()
+    return [LessonRequest(**row) for row in rows]
+
+
+def count_lesson_requests(user_id: UUID) -> int:
+    """마이페이지 목록 페이지네이션 총 개수(레이트리밋 윈도우 카운트와는 별개, 삭제 제외 전체 기간)."""
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM lesson_requests WHERE user_id = %s AND deleted_at IS NULL",
+            (user_id,),
+        )
+        row = cur.fetchone()
+    return row["n"]
+
+
+def get_lesson_request_by_id(request_id: UUID) -> LessonRequest | None:
+    query = (
+        "SELECT id, user_id, concept_name, target_grade, subject_hint, "
+        "mapped_curriculum_code, lesson_output, validation_status, created_at "
+        "FROM lesson_requests WHERE id = %s AND deleted_at IS NULL"
+    )
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (request_id,))
+        row = cur.fetchone()
+    return LessonRequest(**row) if row is not None else None
+
+
+def delete_lesson_request(request_id: UUID, user_id: UUID) -> bool:
+    """소유자가 아니면 아무 행도 안 지운다 — SQL WHERE에 user_id를 직접 걸어
+    호출부의 사전 소유권 체크에만 의존하지 않는다(defense in depth).
+
+    실제로는 soft-delete(deleted_at 세팅)만 한다 — 하드 DELETE를 하면
+    count_lesson_requests_since(레이트리밋 카운트)가 그 행을 못 세게 되어
+    "삭제 후 재생성"으로 일/주 한도를 무력화할 수 있기 때문이다. deleted_at이
+    찍힌 행은 목록/상세/카운트 조회에서는 빠지지만 레이트리밋 카운트에는 계속 잡힌다.
+
+    반환값은 실제로 지워진(소유자였던) 행이 있었는지 여부.
+    """
+    query = (
+        "UPDATE lesson_requests SET deleted_at = now() "
+        "WHERE id = %s AND user_id = %s AND deleted_at IS NULL"
+    )
+    with get_cursor() as cur:
+        cur.execute(query, (request_id, user_id))
+        return cur.rowcount > 0
