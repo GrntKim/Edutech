@@ -3,6 +3,10 @@
 실제 DB에 붙지 않고 psycopg.connect를 가짜 Connection/Cursor로 대체해 검증한다.
 """
 
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+import psycopg
 import pytest
 
 from app.lib import db
@@ -257,6 +261,112 @@ def test_chunk_by_code_normalizes_brackets(monkeypatch):
     params_with = cursor_with_brackets.executed[0][1]
     params_without = cursor_without_brackets.executed[0][1]
     assert params_with == params_without == ("[4과02-01]",)
+
+
+# ---------- 계정 · 세션 · 히스토리 (E, REQ-006) ----------
+
+
+class _RaisingCursor(_FakeCursor):
+    """execute()가 지정된 예외를 던지는 가짜 커서. UniqueViolation 같은 DB 제약
+    위반 경로를 실제 접속 없이 재현하기 위함."""
+
+    def __init__(self, exc: Exception):
+        super().__init__()
+        self._exc = exc
+
+    def execute(self, query, params=None):
+        raise self._exc
+
+
+def _user_row(**overrides):
+    row = {
+        "id": uuid4(),
+        "email": "a@b.com",
+        "password_hash": "hashed",
+        "name": "테스트",
+        "role": "user",
+        "created_at": datetime.now(timezone.utc),
+    }
+    row.update(overrides)
+    return row
+
+
+def test_create_user_returns_user(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_user_row())
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    user = db.create_user("a@b.com", "hashed", "테스트")
+
+    assert user.email == "a@b.com"
+    assert user.role == "user"
+
+
+def test_create_user_duplicate_email_raises_domain_error(monkeypatch):
+    _set_valid_env(monkeypatch)
+    unique_violation = psycopg.errors.UniqueViolation("duplicate key")
+    cursor = _RaisingCursor(unique_violation)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    with pytest.raises(db.EmailAlreadyExistsError):
+        db.create_user("dup@b.com", "hashed", "테스트")
+
+
+def test_get_user_by_email_returns_none_when_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.get_user_by_email("nobody@b.com") is None
+
+
+def test_count_lesson_requests_since_uses_rolling_window(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 3})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    result = db.count_lesson_requests_since(user_id, timedelta(days=1))
+
+    query, params = cursor.executed[0]
+    assert "now() - %s" in query
+    assert "created_at >" in query
+    assert params == (user_id, timedelta(days=1))
+    assert result == 3
+
+
+def test_list_lesson_requests_orders_desc_and_paginates(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    db.list_lesson_requests(user_id, limit=10, offset=20)
+
+    query, params = cursor.executed[0]
+    assert "ORDER BY created_at DESC" in query
+    assert params == (user_id, 10, 20)
+
+
+def test_get_lesson_request_by_id_returns_none_when_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.get_lesson_request_by_id(uuid4()) is None
+
+
+def test_delete_lesson_request_issues_delete_by_id(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor()
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    request_id = uuid4()
+
+    db.delete_lesson_request(request_id)
+
+    query, params = cursor.executed[0]
+    assert "DELETE FROM lesson_requests" in query
+    assert params == (request_id,)
 
 
 # ---------- 공통: embedding 컬럼 제외 ----------
