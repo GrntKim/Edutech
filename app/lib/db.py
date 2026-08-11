@@ -291,7 +291,8 @@ def delete_session(session_id: str) -> None:
 
 def count_lesson_requests_since(user_id: UUID, window: timedelta) -> int:
     """롤링 윈도우 카운트. 캘린더 자정 리셋이 아니라 now() - window 기준
-    (레이트리밋 경계 우회 방지)."""
+    (레이트리밋 경계 우회 방지). 삭제된(soft-delete) 행도 일부러 그대로 센다 —
+    안 그러면 사용자가 삭제→재생성을 반복해 레이트리밋을 무력화할 수 있다."""
     query = (
         "SELECT count(*) AS n FROM lesson_requests "
         "WHERE user_id = %s AND created_at > now() - %s"
@@ -344,7 +345,7 @@ def list_lesson_requests(user_id: UUID, limit: int, offset: int) -> list[LessonR
     query = (
         "SELECT id, user_id, concept_name, target_grade, subject_hint, "
         "mapped_curriculum_code, lesson_output, validation_status, created_at "
-        "FROM lesson_requests WHERE user_id = %s "
+        "FROM lesson_requests WHERE user_id = %s AND deleted_at IS NULL "
         "ORDER BY created_at DESC LIMIT %s OFFSET %s"
     )
     with get_cursor(dict_rows=True) as cur:
@@ -354,9 +355,12 @@ def list_lesson_requests(user_id: UUID, limit: int, offset: int) -> list[LessonR
 
 
 def count_lesson_requests(user_id: UUID) -> int:
-    """마이페이지 목록 페이지네이션 총 개수(레이트리밋 윈도우 카운트와는 별개, 전체 기간)."""
+    """마이페이지 목록 페이지네이션 총 개수(레이트리밋 윈도우 카운트와는 별개, 삭제 제외 전체 기간)."""
     with get_cursor(dict_rows=True) as cur:
-        cur.execute("SELECT count(*) AS n FROM lesson_requests WHERE user_id = %s", (user_id,))
+        cur.execute(
+            "SELECT count(*) AS n FROM lesson_requests WHERE user_id = %s AND deleted_at IS NULL",
+            (user_id,),
+        )
         row = cur.fetchone()
     return row["n"]
 
@@ -365,7 +369,7 @@ def get_lesson_request_by_id(request_id: UUID) -> LessonRequest | None:
     query = (
         "SELECT id, user_id, concept_name, target_grade, subject_hint, "
         "mapped_curriculum_code, lesson_output, validation_status, created_at "
-        "FROM lesson_requests WHERE id = %s"
+        "FROM lesson_requests WHERE id = %s AND deleted_at IS NULL"
     )
     with get_cursor(dict_rows=True) as cur:
         cur.execute(query, (request_id,))
@@ -373,8 +377,21 @@ def get_lesson_request_by_id(request_id: UUID) -> LessonRequest | None:
     return LessonRequest(**row) if row is not None else None
 
 
-def delete_lesson_request(request_id: UUID) -> None:
-    """소유권 검사는 호출부(main.py)가 get_lesson_request_by_id로 먼저 확인한다 —
-    이 함수는 존재/소유 여부를 따지지 않고 그대로 지운다."""
+def delete_lesson_request(request_id: UUID, user_id: UUID) -> bool:
+    """소유자가 아니면 아무 행도 안 지운다 — SQL WHERE에 user_id를 직접 걸어
+    호출부의 사전 소유권 체크에만 의존하지 않는다(defense in depth).
+
+    실제로는 soft-delete(deleted_at 세팅)만 한다 — 하드 DELETE를 하면
+    count_lesson_requests_since(레이트리밋 카운트)가 그 행을 못 세게 되어
+    "삭제 후 재생성"으로 일/주 한도를 무력화할 수 있기 때문이다. deleted_at이
+    찍힌 행은 목록/상세/카운트 조회에서는 빠지지만 레이트리밋 카운트에는 계속 잡힌다.
+
+    반환값은 실제로 지워진(소유자였던) 행이 있었는지 여부.
+    """
+    query = (
+        "UPDATE lesson_requests SET deleted_at = now() "
+        "WHERE id = %s AND user_id = %s AND deleted_at IS NULL"
+    )
     with get_cursor() as cur:
-        cur.execute("DELETE FROM lesson_requests WHERE id = %s", (request_id,))
+        cur.execute(query, (request_id, user_id))
+        return cur.rowcount > 0

@@ -59,6 +59,17 @@ def clear_session(response: Response, session_id: str | None) -> None:
     response.delete_cookie(SESSION_COOKIE_NAME)
 
 
+def _is_expired(expires_at: datetime) -> bool:
+    """sessions.expires_at은 DDL상 TIMESTAMPTZ라 psycopg가 tz-aware datetime을
+    돌려줘야 하지만, 마이그레이션 툴 없이 SQL Studio로 수작업 생성하는 테이블이라
+    실수로 TIMESTAMP(WITHOUT TIME ZONE)로 만들어질 여지가 있다 — 그 경우 naive
+    datetime과 tz-aware now()를 비교하면 TypeError로 전체 인증 라우트가 죽는다.
+    naive로 들어오면 UTC로 간주해 보정한다(방어적, 근본 대책은 DDL을 맞게 유지하는 것)."""
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at <= datetime.now(timezone.utc)
+
+
 def get_current_user(
     session_id: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
 ) -> User:
@@ -67,7 +78,7 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
 
     session = db.get_session(session_id)
-    if session is None or session.expires_at <= datetime.now(timezone.utc):
+    if session is None or _is_expired(session.expires_at):
         raise HTTPException(status_code=401, detail="세션이 만료되었습니다. 다시 로그인해 주세요.")
 
     user = db.get_user_by_id(session.user_id)
@@ -84,7 +95,7 @@ def get_optional_user(
     if session_id is None:
         return None
     session = db.get_session(session_id)
-    if session is None or session.expires_at <= datetime.now(timezone.utc):
+    if session is None or _is_expired(session.expires_at):
         return None
     return db.get_user_by_id(session.user_id)
 

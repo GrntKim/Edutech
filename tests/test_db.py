@@ -16,10 +16,11 @@ from app.lib.types import Subject
 class _FakeCursor:
     """psycopg 3 Cursor의 최소 동작(컨텍스트 매니저 + execute/fetch)을 흉내낸다."""
 
-    def __init__(self, fetchone_result=None, fetchall_result=None):
+    def __init__(self, fetchone_result=None, fetchall_result=None, rowcount=0):
         self.executed: list[tuple[str, object]] = []
         self._fetchone_result = fetchone_result
         self._fetchall_result = [] if fetchall_result is None else fetchall_result
+        self.rowcount = rowcount
 
     def __enter__(self):
         return self
@@ -356,17 +357,64 @@ def test_get_lesson_request_by_id_returns_none_when_missing(monkeypatch):
     assert db.get_lesson_request_by_id(uuid4()) is None
 
 
-def test_delete_lesson_request_issues_delete_by_id(monkeypatch):
+def test_delete_lesson_request_soft_deletes_scoped_to_owner(monkeypatch):
     _set_valid_env(monkeypatch)
-    cursor = _FakeCursor()
+    cursor = _FakeCursor(rowcount=1)
     _patch_connect(monkeypatch, _FakeConnection(cursor))
     request_id = uuid4()
+    user_id = uuid4()
 
-    db.delete_lesson_request(request_id)
+    result = db.delete_lesson_request(request_id, user_id)
 
     query, params = cursor.executed[0]
-    assert "DELETE FROM lesson_requests" in query
-    assert params == (request_id,)
+    assert "UPDATE lesson_requests" in query
+    assert "SET deleted_at = now()" in query
+    assert "user_id = %s" in query
+    assert params == (request_id, user_id)
+    assert result is True
+
+
+def test_delete_lesson_request_returns_false_when_not_owner_or_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(rowcount=0)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.delete_lesson_request(uuid4(), uuid4()) is False
+
+
+def test_count_lesson_requests_since_does_not_filter_deleted_at(monkeypatch):
+    """레이트리밋 카운트는 삭제된(soft-delete) 행도 세야 한다 — 안 그러면
+    삭제→재생성으로 일/주 한도를 무력화할 수 있다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 3})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.count_lesson_requests_since(uuid4(), timedelta(days=1))
+
+    query, _ = cursor.executed[0]
+    assert "deleted_at" not in query
+
+
+def test_list_lesson_requests_excludes_deleted(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.list_lesson_requests(uuid4(), limit=10, offset=0)
+
+    query, _ = cursor.executed[0]
+    assert "deleted_at IS NULL" in query
+
+
+def test_get_lesson_request_by_id_excludes_deleted(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.get_lesson_request_by_id(uuid4())
+
+    query, _ = cursor.executed[0]
+    assert "deleted_at IS NULL" in query
 
 
 # ---------- 공통: embedding 컬럼 제외 ----------

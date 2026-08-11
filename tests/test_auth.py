@@ -86,6 +86,40 @@ def test_get_current_user_returns_user_for_valid_session(monkeypatch):
     assert result.id == user.id
 
 
+def test_get_current_user_handles_naive_expires_at_without_crashing(monkeypatch):
+    """sessions.expires_at 컬럼이 실수로 TIMESTAMP(WITHOUT TIME ZONE)로 만들어지면
+    psycopg가 naive datetime을 돌려줄 수 있다 — tz-aware now()와 그냥 비교하면
+    TypeError로 전체 인증이 죽는다. naive여도 안 죽고 UTC로 취급해 정상 판정해야 한다."""
+    user = _user()
+    valid_naive = Session(
+        id="tok",
+        user_id=user.id,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1),
+    )
+    monkeypatch.setattr(db, "get_session", lambda sid: valid_naive)
+    monkeypatch.setattr(db, "get_user_by_id", lambda uid: user)
+
+    result = auth.get_current_user(session_id="tok")
+
+    assert result.id == user.id
+
+
+def test_get_current_user_treats_expired_naive_session_as_expired(monkeypatch):
+    user = _user()
+    expired_naive = Session(
+        id="tok",
+        user_id=user.id,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8),
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1),
+    )
+    monkeypatch.setattr(db, "get_session", lambda sid: expired_naive)
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth.get_current_user(session_id="tok")
+    assert exc_info.value.status_code == 401
+
+
 # ---------- require_admin ----------
 
 
