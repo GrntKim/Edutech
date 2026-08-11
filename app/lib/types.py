@@ -7,6 +7,8 @@ class Subject(str, Enum):
     SCIENCE = "SCIENCE"
     DOMESTIC_SCIENCE = "DOMESTIC_SCIENCE"
     ART = "ART"
+    SOCIAL = "SOCIAL"
+    KOREAN = "KOREAN"
 
 
 class GradeBand(str, Enum):
