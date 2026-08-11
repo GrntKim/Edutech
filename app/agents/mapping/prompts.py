@@ -26,6 +26,14 @@ Rules:
 7. Do NOT generate confidence.
 8. Every criteria score must be between 0.0 and 1.0.
 9. Return JSON only.
+10. Write the "analogy" field in Korean, as ONE natural flowing explanation (not
+    labeled/bulleted) that connects exactly three parts in this order:
+    (1) what the student actually does in a real activity of the chosen curriculum
+        unit, (2) the principle the student discovers through that activity, and
+        (3) how AI carries out the same principle mechanically. For part (3), do not
+        stop at a vague statement like "AI does this too" — concretely describe what
+        input AI receives and what feature/criterion/calculation it uses to make its
+        judgment, at a level an elementary student can understand.
 """
 
 
@@ -118,7 +126,13 @@ Evaluate candidates using:
 
 # Output Format
 
-Return JSON only.
+Return JSON only. "analogy" must follow Rule 10 (student activity -> discovered
+principle -> AI's mechanical process, in Korean, one flowing explanation), for example:
+
+  "학생이 동물을 다리 개수와 사는 곳 같은 특징으로 나누어 무리를 짓다 보면, 비슷한 특징을 \
+가진 대상끼리 묶인다는 분류 원리를 발견하게 됩니다. AI도 이와 똑같이, 데이터마다 특징값을 \
+입력받아 정해진 기준(예: 특징값 사이의 거리)으로 얼마나 비슷한지 계산한 뒤, 가장 가까운 \
+것끼리 자동으로 묶는 방식으로 분류를 수행합니다."
 
 {{
   "chunk_id": "...",
