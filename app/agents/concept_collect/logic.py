@@ -1,4 +1,5 @@
 import logging
+import os
 
 from app.lib.types import (
     ConceptInput,
@@ -18,9 +19,15 @@ from app.agents.concept_collect.prompts import (
     QUERY_REWRITE_PROMPT,
 )
 
-PROMPT_VERSION = "v1.2"
+PROMPT_VERSION = "v1.3"
 
 logger = logging.getLogger(__name__)
+
+# 학년별 key_operations 상한 (D 요청 / WBS 2.3, 측정 전 잠정값)
+_ov = os.getenv("A1_KEY_OPS")
+KEY_OPS_LIMIT = {1: 1, 2: 1, 3: 1, 4: 1, 5: 2, 6: 3}
+if _ov:
+    KEY_OPS_LIMIT = {g: int(_ov) for g in range(1, 7)}
 
 # A2 검색 요청 건수. 측정 기록이 top_k=15 기준이라 명시한다
 TOP_K = 15
@@ -135,7 +142,7 @@ def analyze_concept(
     # 2단계: 검색용 쿼리 재작성
     rewrite_prompt = QUERY_REWRITE_PROMPT.format(
         concept_name=concept.concept_name,
-        key_operations=", ".join(concept.key_operations),
+        key_operations=", ".join(concept.key_operations[:KEY_OPS_LIMIT.get(context.target_grade, 3)]), 
         prerequisite_ideas=", ".join(concept.prerequisite_ideas),
         target_grade=context.target_grade,
     )
