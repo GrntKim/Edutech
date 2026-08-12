@@ -20,7 +20,7 @@ from app.agents.concept_collect.logic import analyze_concept as collect_concept
 from app.agents.curriculum_search.logic import CurriculumSearchError, search_curriculum
 from app.agents.lesson_generate.logic import generate_lesson as _generate_lesson
 from app.agents.mapping.logic import MappingError, map_curriculum as map_concept
-from app.agents.validate.logic import validate
+from app.agents.validate.logic import PRINCIPLE_COUNT_VIOLATION_PREFIX, validate
 from app.lib.db import DatabaseError
 from app.lib.gemini import GeminiError
 from app.lib.types import (
@@ -75,14 +75,33 @@ def generate_lesson(
     mapping: MappingResult,
     context: PipelineContext,
     retry_feedback: ValidationResult | None = None,
+    caution_terms: list[str] | None = None,
 ) -> dict:
     """C의 generate_lesson()이 반환하는 LessonOutput(Pydantic)을 dict로 변환한다.
 
     LessonOutput은 C 소유(app/agents/lesson_generate/)라 공통 계층(orchestrate.py)이
     그 타입을 직접 참조하면 의존 방향이 뒤집힌다. PipelineResult.lesson_plan도 같은
     이유로 dict 계약이다 — model_dump()로 변환해서 그 계약을 지킨다.
+
+    caution_terms는 A1의 `StructuredConcept.caution_terms`를 그대로 C에 넘긴다.
+    D의 사후 검증에만 쓰던 값인데, 생성 시점에 목록을 주면 C가 애초에 그 용어를
+    쓰지 않아 재시도 자체가 줄어든다(같은 개념인데 4학년 교안에만 "레이블"이
+    노출된 2026-08-11 실측 건). C 쪽 기본값이 None이라 인자를 넘기지 않는
+    호출부도 그대로 동작한다.
     """
-    return _generate_lesson(mapping, context, retry_feedback).model_dump()
+    return _generate_lesson(mapping, context, retry_feedback, caution_terms).model_dump()
+
+
+def _forbidden_term_violations(violations: list[str]) -> set[str]:
+    """수렴 불가 판정 대상인 금지어 위반만 남긴다(원리 개수 위반은 제외).
+
+    수렴 불가 판정은 "지적한 용어를 고치면 다른 용어가 걸리는" 금지어 특유의
+    두더지잡기를 겨냥한 장치다. 원리 개수 위반은 고칠 대상이 명확하고 개수만
+    맞추면 끝나므로 같은 취급을 하면 안 된다 — 섞어서 비교하면 1회차 금지어
+    위반 / 2회차 개수 위반이 "완전히 다른 위반"으로 보여 고칠 수 있는 문제인데도
+    조기 종료해 버린다.
+    """
+    return {v for v in violations if not v.startswith(PRINCIPLE_COUNT_VIOLATION_PREFIX)}
 
 
 # ── 오케스트레이션 본체 ──────────────────────────────
@@ -181,7 +200,14 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
             try:
                 stage_start = time.monotonic()
                 logger.info(f"stage_start stage=C retry_count={retry_count}")
-                new_lesson_plan = generate_lesson(mapping, context, retry_feedback)
+                new_lesson_plan = generate_lesson(
+                    mapping,
+                    context,
+                    retry_feedback,
+                    # 사후 검증(D)뿐 아니라 생성 프롬프트(C)에도 매 회차 넘긴다 —
+                    # 재시도 때도 목록이 빠지지 않아야 순화가 유지된다.
+                    caution_terms=concept_result.concept.caution_terms,
+                )
                 logger.info(f"stage_end stage=C elapsed_ms={_elapsed_ms(stage_start):.1f}")
 
                 stage_start = time.monotonic()
@@ -225,7 +251,12 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
             # 지적받은 용어를 고치면 다른 용어가 걸리는 상태로, C가 해결할 수
             # 있는 문제가 아니다. 첫 검증(previous_violations 없음)은 판정하지
             # 않는다. 일부만 겹치면(isdisjoint=False) 개선 중이므로 계속 진행한다.
-            if previous_violations and set(validation.violations).isdisjoint(previous_violations):
+            # 원리 개수 위반은 양쪽에서 걸러낸 뒤 비교한다(_forbidden_term_violations
+            # 참고). 걸러낸 결과가 한쪽이라도 비면 비교할 대상이 없으므로 판정하지
+            # 않고 재시도를 계속한다.
+            current_terms = _forbidden_term_violations(validation.violations)
+            previous_terms = _forbidden_term_violations(previous_violations or [])
+            if previous_terms and current_terms and current_terms.isdisjoint(previous_terms):
                 logger.warning(
                     f"pipeline_retry_diverged retry_count={retry_count} "
                     f"elapsed_ms={_elapsed_ms(pipeline_start):.1f}"

@@ -146,7 +146,9 @@ def main() -> None:
 
     while True:
         t = time.monotonic()
-        lesson_plan = orchestrate.generate_lesson(mapping, context, retry_feedback)
+        lesson_plan = orchestrate.generate_lesson(
+            mapping, context, retry_feedback, caution_terms=concept.caution_terms
+        )
         print(f"\n[C 교안 생성] retry={retry_count} ({_ms(t)})")
 
         t = time.monotonic()
@@ -166,8 +168,11 @@ def main() -> None:
 
         # 재시도 위반이 이전과 완전히 다르면 C가 해결할 수 있는 문제가 아니다
         # (ORCH-002 수렴 불가 조기 종료). 이 조건이 빠지면 실제 파이프라인보다
-        # 시도 횟수가 많아져 소요 시간이 실제와 어긋난다.
-        if previous_violations and set(validation.violations).isdisjoint(previous_violations):
+        # 시도 횟수가 많아져 소요 시간이 실제와 어긋난다. run_pipeline()과 똑같이
+        # 원리 개수 위반은 비교에서 제외한다.
+        current_terms = orchestrate._forbidden_term_violations(validation.violations)
+        previous_terms = orchestrate._forbidden_term_violations(previous_violations)
+        if previous_terms and current_terms and current_terms.isdisjoint(previous_terms):
             stop_reason = "수렴 불가로 재시도 중단"
             print(f"  -> {stop_reason}")
             break

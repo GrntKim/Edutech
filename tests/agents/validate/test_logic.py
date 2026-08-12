@@ -368,3 +368,111 @@ class TestAlwaysForbiddenTerms:
         )
         assert result.passed is False
         assert "라벨" in result.violations
+
+
+class TestPrincipleCountValidation:
+    """학년별 AI 원리 개수 검증 — 금지어 매칭이 아니라 배열 길이 비교다.
+
+    기준값은 4학년 1개 / 5학년 2개 / 6학년 3개이고, 1~3학년은 잠정 1개다
+    (logic._PRINCIPLE_COUNT_BY_GRADE).
+    """
+
+    def _validate(self, target_grade, ai_principles, **kwargs):
+        plan = _make_lesson_plan(ai_principles=ai_principles)
+        return logic.validate(
+            plan,
+            _make_context(target_grade=target_grade),
+            subject=Subject.SCIENCE,
+            caution_terms=kwargs.get("caution_terms", []),
+            concept_name=kwargs.get("concept_name", "군집화"),
+        )
+
+    def test_grade6_with_three_principles_passes(self):
+        result = self._validate(6, ["원리1", "원리2", "원리3"])
+        assert result.passed is True
+        assert result.violations == []
+
+    def test_grade6_with_two_principles_violates(self):
+        """2026-08-11 실측 사례(군집화 6학년, 2개)."""
+        result = self._validate(6, ["원리1", "원리2"])
+        assert result.passed is False
+        assert result.violations == [f"{logic.PRINCIPLE_COUNT_VIOLATION_PREFIX}: 3개 필요, 2개 생성"]
+        assert "3개" in result.retry_feedback
+
+    def test_grade5_boundary(self):
+        assert self._validate(5, ["원리1", "원리2"]).passed is True
+        assert self._validate(5, ["원리1"]).passed is False
+        assert self._validate(5, ["원리1", "원리2", "원리3"]).passed is False
+
+    def test_grade4_boundary(self):
+        assert self._validate(4, ["원리1"]).passed is True
+        assert self._validate(4, ["원리1", "원리2"]).passed is False
+
+    def test_lower_grades_expect_one(self):
+        for grade in (1, 2, 3):
+            assert self._validate(grade, ["원리1"]).passed is True
+            assert self._validate(grade, ["원리1", "원리2"]).passed is False
+
+    def test_over_count_is_violation(self):
+        """초과도 위반이다 — 학년별 난이도 차등이 무너진 경우이기 때문."""
+        result = self._validate(4, ["원리1", "원리2", "원리3"])
+        assert result.passed is False
+        assert result.violations == [f"{logic.PRINCIPLE_COUNT_VIOLATION_PREFIX}: 1개 필요, 3개 생성"]
+
+    def test_none_skips_validation(self):
+        """C가 못 채웠거나 기존 히스토리 데이터면 이 검증 때문에 반려하지 않는다."""
+        result = self._validate(6, None)
+        assert result.passed is True
+        assert result.violations == []
+
+    def test_empty_list_skips_validation(self):
+        result = self._validate(6, [])
+        assert result.passed is True
+
+    def test_missing_key_skips_validation(self):
+        """`ai_principles` 키 자체가 없는 dict(기존 교안)도 통과한다."""
+        result = logic.validate(
+            _make_lesson_plan(),
+            _make_context(target_grade=6),
+            subject=Subject.SCIENCE,
+            caution_terms=[],
+            concept_name="군집화",
+        )
+        assert result.passed is True
+
+    def test_skipping_count_does_not_disable_term_check(self):
+        """개수 검증을 건너뛰어도 금지어 검증은 정상 동작한다."""
+        plan = _make_lesson_plan(ai_principles=None)
+        plan["learning_objectives"] = ["정답 레이블 없이 묶을 수 있다."]
+        result = logic.validate(
+            plan,
+            _make_context(target_grade=6),
+            subject=Subject.SCIENCE,
+            caution_terms=[],
+            concept_name="군집화",
+        )
+        assert result.passed is False
+        assert result.violations == ["레이블"]
+
+    def test_both_violations_reported_together(self):
+        plan = _make_lesson_plan(ai_principles=["원리1", "원리2"])
+        plan["learning_objectives"] = ["정답 레이블 없이 묶을 수 있다."]
+        result = logic.validate(
+            plan,
+            _make_context(target_grade=6),
+            subject=Subject.SCIENCE,
+            caution_terms=[],
+            concept_name="군집화",
+        )
+        assert result.passed is False
+        assert "레이블" in result.violations
+        assert f"{logic.PRINCIPLE_COUNT_VIOLATION_PREFIX}: 3개 필요, 2개 생성" in result.violations
+        # 피드백은 두 종류를 문단으로 나눠 담는다 — 고쳐야 할 것이 서로 다르다.
+        assert "'레이블'" in result.retry_feedback
+        assert "ai_principles" in result.retry_feedback
+
+    def test_violation_label_is_stable_across_retries(self):
+        """접두사가 고정이라 오케스트레이터가 개수 위반을 식별할 수 있다."""
+        for count in (1, 2, 4):
+            result = self._validate(6, ["원리"] * count)
+            assert result.violations[0].startswith(logic.PRINCIPLE_COUNT_VIOLATION_PREFIX)

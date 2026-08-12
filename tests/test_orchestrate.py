@@ -13,7 +13,9 @@ from app.agents import orchestrate
 from app.agents.concept_collect.logic import analyze_concept
 from app.agents.curriculum_search.logic import CurriculumSearchError
 from app.agents.curriculum_search.logic import search_curriculum as real_search_curriculum
+from app.agents.lesson_generate.logic import generate_lesson as real_generate_lesson
 from app.agents.mapping.logic import MappingError, map_curriculum
+from app.agents.validate.logic import PRINCIPLE_COUNT_VIOLATION_PREFIX
 from app.agents.validate.logic import validate as real_validate
 from app.lib.gemini import GeminiError
 from app.lib.types import (
@@ -154,7 +156,19 @@ class TestAgentContractSignatures:
             ("mapping", "POSITIONAL_OR_KEYWORD", False),
             ("context", "POSITIONAL_OR_KEYWORD", False),
             ("retry_feedback", "POSITIONAL_OR_KEYWORD", True),
+            ("caution_terms", "POSITIONAL_OR_KEYWORD", True),
         ]
+
+    def test_wrapper_matches_real_generate_lesson_arity(self):
+        """래퍼는 C의 실제 함수에 인자를 그대로 넘기므로 인자 이름·순서가 같아야 한다.
+
+        첫 인자 이름만 다르다(래퍼 `mapping` vs C `mapping_result`) — 래퍼가
+        먼저 쓰던 이름을 유지한 것이라 이 테스트에서도 그 차이는 허용한다.
+        """
+        wrapper = _signature_shape(orchestrate.generate_lesson)
+        real = _signature_shape(real_generate_lesson)
+        assert wrapper[1:] == real[1:]
+        assert wrapper[0][1:] == real[0][1:]
 
 
 def test_normal_flow_returns_pipeline_result(monkeypatch):
@@ -176,7 +190,7 @@ def test_normal_flow_returns_pipeline_result(monkeypatch):
         calls.append("B")
         return mapping
 
-    def fake_generate_lesson(m, ctx, retry_feedback=None):
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
         calls.append("C")
         return {"title": "완성 교안"}
 
@@ -275,7 +289,7 @@ def test_map_concept_receives_context(monkeypatch):
     monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", fake_map_concept)
-    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
+    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None, caution_terms=None: {"title": "t"})
     monkeypatch.setattr(
         orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms, concept_name: ValidationResult(passed=True)
     )
@@ -297,7 +311,7 @@ def test_validation_retries_once_then_passes(monkeypatch):
     second_validation = ValidationResult(passed=True)
     validation_queue = [first_validation, second_validation]
 
-    def fake_generate_lesson(m, ctx, retry_feedback=None):
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
         c_feedbacks.append(retry_feedback)
         return {"attempt": len(c_feedbacks)}
 
@@ -328,7 +342,7 @@ def test_validation_exhausts_retries(monkeypatch):
     mapping = _make_mapping()
     call_count = {"c": 0, "d": 0}
 
-    def fake_generate_lesson(m, ctx, retry_feedback=None):
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
         call_count["c"] += 1
         return {"attempt": call_count["c"]}
 
@@ -365,7 +379,7 @@ def test_validation_diverges_stops_before_max_retries(monkeypatch):
         ValidationResult(passed=False, violations=["모서리"], retry_feedback="b"),  # 완전히 다른 위반
     ]
 
-    def fake_generate_lesson(m, ctx, retry_feedback=None):
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
         call_count["c"] += 1
         return {"attempt": call_count["c"]}
 
@@ -403,7 +417,7 @@ def test_validation_partial_overlap_continues(monkeypatch):
         ValidationResult(passed=True),
     ]
 
-    def fake_generate_lesson(m, ctx, retry_feedback=None):
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
         call_count["c"] += 1
         return {"attempt": call_count["c"]}
 
@@ -437,7 +451,7 @@ def test_first_validation_failure_alone_does_not_trigger_divergence(monkeypatch)
         ValidationResult(passed=True),
     ]
 
-    def fake_generate_lesson(m, ctx, retry_feedback=None):
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
         call_count["c"] += 1
         return {"attempt": call_count["c"]}
 
@@ -477,12 +491,123 @@ def test_validate_receives_caution_terms_from_a1(monkeypatch):
     monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
-    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
+    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None, caution_terms=None: {"title": "t"})
     monkeypatch.setattr(orchestrate, "validate", fake_validate)
 
     orchestrate.run_pipeline(ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None))
 
     assert received["caution_terms"] == ["과적합", "오버피팅"]
+
+
+def test_generate_lesson_receives_caution_terms_every_attempt(monkeypatch):
+    """C 생성 호출에도 caution_terms가 전달되며, 재시도 회차에서도 빠지지 않는다.
+
+    사후 검증(D)만으로는 위반을 잡아 재시도를 돌릴 뿐이라 응답이 느려진다.
+    생성 시점에 목록을 주면 C가 애초에 그 용어를 쓰지 않는다.
+    """
+    concept_result = _make_concept_result(caution_terms=["레이블", "군집"])
+    search_results = _make_search_results()
+    mapping = _make_mapping()
+    received: list[list[str] | None] = []
+
+    validation_queue = [
+        ValidationResult(passed=False, violations=["레이블"], retry_feedback="x"),
+        ValidationResult(passed=True),
+    ]
+
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
+        received.append(caution_terms)
+        return {"title": "t"}
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
+    monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
+    monkeypatch.setattr(
+        orchestrate,
+        "validate",
+        lambda lp, ctx, *, subject, caution_terms, concept_name: validation_queue.pop(0),
+    )
+
+    orchestrate.run_pipeline(ConceptInput(raw_concept_name="군집화", target_grade=4, subject_hint=None))
+
+    assert received == [["레이블", "군집"], ["레이블", "군집"]]
+
+
+def test_principle_count_violation_does_not_trigger_divergence(monkeypatch):
+    """금지어 위반 → 원리 개수 위반으로 바뀌어도 수렴 불가로 보지 않는다.
+
+    수렴 불가 판정은 금지어 두더지잡기를 겨냥한 장치다. 개수 위반은 고칠
+    대상이 명확하므로 섞어서 비교하면 고칠 수 있는 문제인데도 조기 종료한다.
+    """
+    concept_result = _make_concept_result()
+    search_results = _make_search_results()
+    mapping = _make_mapping()
+    call_count = {"c": 0}
+
+    validation_queue = [
+        ValidationResult(passed=False, violations=["레이블"], retry_feedback="x"),
+        ValidationResult(
+            passed=False,
+            violations=[f"{PRINCIPLE_COUNT_VIOLATION_PREFIX}: 3개 필요, 2개 생성"],
+            retry_feedback="y",
+        ),
+        ValidationResult(passed=True),
+    ]
+
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
+        call_count["c"] += 1
+        return {"attempt": call_count["c"]}
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
+    monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
+    monkeypatch.setattr(
+        orchestrate,
+        "validate",
+        lambda lp, ctx, *, subject, caution_terms, concept_name: validation_queue.pop(0),
+    )
+
+    result = orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="군집화", target_grade=6, subject_hint=None)
+    )
+
+    assert call_count["c"] == 3  # 중단 없이 세 번째(통과)까지 진행
+    assert result.status is PipelineStatus.SUCCESS
+
+
+def test_divergence_still_triggers_when_only_count_violation_differs(monkeypatch):
+    """개수 위반을 걸러낸 뒤에도 금지어가 완전히 다르면 기존대로 수렴 불가로 판정한다."""
+    concept_result = _make_concept_result()
+    search_results = _make_search_results()
+    mapping = _make_mapping()
+    count_violation = f"{PRINCIPLE_COUNT_VIOLATION_PREFIX}: 3개 필요, 2개 생성"
+
+    validation_queue = [
+        ValidationResult(passed=False, violations=["레이블", count_violation], retry_feedback="x"),
+        ValidationResult(passed=False, violations=["백분율", count_violation], retry_feedback="y"),
+    ]
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
+    monkeypatch.setattr(
+        orchestrate,
+        "generate_lesson",
+        lambda m, ctx, retry_feedback=None, caution_terms=None: {"title": "t"},
+    )
+    monkeypatch.setattr(
+        orchestrate,
+        "validate",
+        lambda lp, ctx, *, subject, caution_terms, concept_name: validation_queue.pop(0),
+    )
+
+    result = orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="군집화", target_grade=6, subject_hint=None)
+    )
+
+    assert result.status is PipelineStatus.VALIDATION_DIVERGED
 
 
 def test_validate_receives_concept_name_from_a1(monkeypatch):
@@ -502,7 +627,7 @@ def test_validate_receives_concept_name_from_a1(monkeypatch):
     monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
-    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
+    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None, caution_terms=None: {"title": "t"})
     monkeypatch.setattr(orchestrate, "validate", fake_validate)
 
     orchestrate.run_pipeline(
@@ -527,7 +652,7 @@ def test_validate_receives_subject_from_mapping_not_context(monkeypatch):
     monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
-    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
+    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None, caution_terms=None: {"title": "t"})
     monkeypatch.setattr(orchestrate, "validate", fake_validate)
 
     orchestrate.run_pipeline(ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None))
@@ -543,7 +668,7 @@ def test_gemini_error_during_retry_falls_back_to_last_success(monkeypatch):
     mapping = _make_mapping()
     call_count = {"c": 0}
 
-    def fake_generate_lesson(m, ctx, retry_feedback=None):
+    def fake_generate_lesson(m, ctx, retry_feedback=None, caution_terms=None):
         call_count["c"] += 1
         if call_count["c"] == 2:
             raise GeminiError("일시적 오류")
@@ -629,7 +754,7 @@ def test_pipeline_context_subject_hint_is_none(monkeypatch):
     monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
     monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
     monkeypatch.setattr(orchestrate, "map_concept", fake_map_concept)
-    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
+    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None, caution_terms=None: {"title": "t"})
     monkeypatch.setattr(
         orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms, concept_name: ValidationResult(passed=True)
     )
