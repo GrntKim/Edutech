@@ -18,7 +18,7 @@ from app.agents.concept_collect.prompts import (
     QUERY_REWRITE_PROMPT,
 )
 
-PROMPT_VERSION = "v1.1"
+PROMPT_VERSION = "v1.2"
 
 logger = logging.getLogger(__name__)
 
