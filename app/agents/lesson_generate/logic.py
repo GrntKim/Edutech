@@ -121,6 +121,7 @@ def generate_lesson(
     mapping_result: MappingResult,
     context: PipelineContext,
     retry_feedback: ValidationResult | None = None,
+    caution_terms: list[str] | None = None,
 ) -> LessonOutput:
     """LG-001/LG-002/LG-003/LG-004: 교안 양식의 모든 빈칸을 한 번 채운다 (단일 시도).
 
@@ -132,10 +133,20 @@ def generate_lesson(
     (D의 재검증 실패) 프롬프트에 반영해 교정된 결과를 생성한다(LG-004). 최대
     3회 재시도 루프 자체는 오케스트레이터(D)의 책임이며, 이 함수는 한 번의
     생성만 담당한다.
+
+    caution_terms: A1이 만든 이 개념의 노출 금지 원어·전문 용어 목록
+    (concept.caution_terms). 지금까지는 D(validate)가 사후 검증할 때만 쓰이고
+    C 프롬프트에는 전달되지 않아, 같은 개념인데도 노출 여부가 학년마다 뒤집히는
+    현상이 있었다(2026-08-11 김준명 리뷰 지적 ③). 기본값 None이라 orchestrate.py
+    호출부가 아직 이 인자를 넘기지 않아도 그대로 동작한다 — 넘겨받으면
+    build_generation_prompt가 금지 목록을 프롬프트에 직접 박아 넣는다.
     """
     lesson_input = build_lesson_input(mapping_result, context, retry_feedback)
     standard = fetch_achievement_standard(lesson_input.achievement_code)
-    prompt = f"{SYSTEM_INSTRUCTION}\n\n{build_generation_prompt(lesson_input, standard)}"
+    prompt = (
+        f"{SYSTEM_INSTRUCTION}\n\n"
+        f"{build_generation_prompt(lesson_input, standard, caution_terms)}"
+    )
 
     # app/lib/gemini.py(E 소유)의 team 규약: 모든 에이전트는 이 모듈을 경유해서만
     # Gemini를 호출한다(google.genai 직접 import 금지). system_instruction을 별도로
@@ -170,4 +181,5 @@ def generate_lesson(
         lesson_stages=content.lesson_stages,
         evaluation_criteria=content.evaluation_criteria,
         worksheet=content.worksheet,
+        ai_principles=content.ai_principles,
     )
