@@ -183,6 +183,12 @@ class GeneratedLessonContent(BaseModel):
     # 학생이 직접 손으로 채우거나 기록해야 하는 실습(카드 분류, 관찰 기록 등)이 있는
     # 수업에서만 채우고, 필요 없는 수업(토론·구두 발표·게임 등)에서는 null로 둔다.
     worksheet: Worksheet | None = None
+    # 2026-08-11 D/E(김준명) 요청: 학년별 원리 개수 차등(4학년 1개/5학년 2개/6학년 3개,
+    # prompts.py 규칙 8)을 D가 교안 본문 파싱 없이 배열 길이만으로 검증할 수 있게 하는
+    # 필드. 이미 활동2/학습목표에 쓴 AI 원리를 난이도(도입 순서) 오름차순으로 나열만
+    # 한다 — 새 내용을 생성하지 않는다. Optional로 둬서 모델이 못 채워도 스키마 검증
+    # 자체가 막히지 않게 한다(필수로 두면 재시도 루프가 이 필드만으로 계속 돌 수 있음).
+    ai_principles: list[str] | None = None
 
 
 class LessonOutput(BaseModel):
@@ -207,3 +213,6 @@ class LessonOutput(BaseModel):
     lesson_stages: LessonStages
     evaluation_criteria: EvaluationCriteria
     worksheet: Worksheet | None = None
+    # GeneratedLessonContent.ai_principles를 그대로 echo. D 검증(REQ005)이 배열
+    # 길이로 학년별 원리 개수 차등을 확인하는 데 쓴다.
+    ai_principles: list[str] | None = None

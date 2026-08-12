@@ -17,7 +17,14 @@ from fastapi.templating import Jinja2Templates
 from app.agents.lesson_generate import LessonOutput, render_lesson_docx
 from app.agents.orchestrate import run_pipeline
 from app.lib import auth, db
-from app.lib.types import ConceptInput, LessonRequest, PipelineResult, Subject, User
+from app.lib.types import (
+    ConceptInput,
+    LessonRequest,
+    PipelineResult,
+    PipelineStatus,
+    Subject,
+    User,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +38,31 @@ DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 
 MYPAGE_PAGE_SIZE = 10
 ADMIN_CHUNKS_PAGE_SIZE = 20
+
+# lesson_requests.validation_status에는 PipelineStatus 값이 그대로 들어간다.
+# 화면에는 사람이 읽을 수 있는 문구로 바꿔서 보여준다.
+_STATUS_LABELS = {
+    PipelineStatus.SUCCESS.value: "검증 통과",
+    PipelineStatus.MAX_RETRIES_EXCEEDED.value: "검증 미통과(재시도 소진)",
+    PipelineStatus.VALIDATION_DIVERGED.value: "검증 미통과(수렴 실패)",
+    PipelineStatus.UNSUPPORTED_CONCEPT.value: "AI 개념으로 인식되지 않음",
+    PipelineStatus.AMBIGUOUS_INPUT.value: "입력이 너무 넓어 특정 불가",
+    PipelineStatus.NO_CURRICULUM_MATCH.value: "연결 가능한 성취기준 없음",
+    PipelineStatus.AGENT_ERROR.value: "일시적 오류로 생성 실패",
+    PipelineStatus.PIPELINE_ERROR.value: "일시적 오류로 생성 실패",
+}
+
+
+def status_label(value: str) -> str:
+    """validation_status 값을 화면용 문구로 바꾼다.
+
+    PipelineStatus 도입 전에 저장된 행에는 경고 문구가 자유 문자열로 들어가
+    있으므로, 매핑에 없는 값은 원문 그대로 내보낸다(기존 기록 호환).
+    """
+    return _STATUS_LABELS.get(value, value)
+
+
+templates.env.filters["status_label"] = status_label
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -48,23 +80,28 @@ def _record_attempt(
     """파이프라인을 실행한 요청을 결과와 무관하게 lesson_requests에 남긴다.
 
     이 INSERT 자체가 레이트리밋 카운트다(count_lesson_requests_since가 이
-    테이블을 센다). A1 조기 종료(unsupported_concept)나 A2 검색 0건도 이미
-    Gemini를 호출해 비용이 발생한 뒤이므로 반드시 카운트한다 — 예전에는
+    테이블을 센다). A1의 unsupported_concept나 A2 검색 0건처럼 조기 종료한
+    실행도 이미 Gemini를 호출해 비용이 발생한 뒤이므로 카운트한다 — 예전에는
     lesson_plan이 비면 저장을 건너뛰어, 0건이 재현되는 조합을 반복 클릭하면
     한도 없이 API를 쓸 수 있었다.
 
+    단, ambiguous_input은 예외다. A1이 LLM을 부르기 전에 규칙으로 걸러내는
+    경로라 Gemini 호출이 0회이고, 따라서 반복해도 우회 위험이 없다. 이 판정은
+    호출부(generate)에서 하며 여기까지 오지 않는다.
+
+    validation_status에는 PipelineStatus 값을 그대로 넣는다 — 예전처럼 경고
+    문구를 담으면 사후에 실패 사유를 집계할 수 없다. 화면 표시는 status_label()이
+    맡는다.
+
     실패 시도는 lesson_output이 빈 dict로 남는다(NULL이 아니므로 DDL 변경
-    불필요). 마이페이지·재출력은 이 값이 비었는지로 실패 행을 판별한다 —
-    validation_status는 경고 문구가 그대로 들어가는 자유 문자열이라 판별에
-    쓸 수 없다.
+    불필요). 마이페이지·재출력은 계속 이 값이 비었는지로 실패 행을 판별한다.
 
     result=None은 run_pipeline이 예외로 죽은 경우.
     """
     lesson_plan = result.lesson_plan if result is not None else {}
-    if result is None:
-        status = "pipeline_error"
-    else:
-        status = "passed" if result.validation.passed else (result.warning or "failed")
+    status = (
+        result.status.value if result is not None else PipelineStatus.PIPELINE_ERROR.value
+    )
 
     try:
         return db.create_lesson_request(
@@ -149,7 +186,14 @@ def generate(
         _record_attempt(user, concept, grade, None)
         raise
 
-    saved = _record_attempt(user, concept, grade, result)
+    if result.status is PipelineStatus.AMBIGUOUS_INPUT:
+        # A1이 LLM 호출 전에 규칙만으로 걸러낸 경로라 API 비용이 0이다("AI",
+        # "인공지능", 빈 값 등 — 처음 쓰는 교사가 가장 먼저 칠 입력들이 여기
+        # 걸린다). 반복해도 쿼터를 안 쓰므로 레이트리밋에서 제외한다.
+        # 나머지 경로는 Gemini를 이미 호출했으므로 현행대로 카운트한다.
+        saved = None
+    else:
+        saved = _record_attempt(user, concept, grade, result)
 
     return templates.TemplateResponse(
         request,

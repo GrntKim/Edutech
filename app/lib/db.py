@@ -421,13 +421,16 @@ def create_lesson_request(
     validation_status: str,
 ) -> LessonRequest:
     """이 INSERT 자체가 레이트리밋 카운트 대상이다(count_lesson_requests_since가
-    이 테이블을 그대로 세므로 별도 카운터 컬럼 불필요). 파이프라인을 실행한
-    요청은 결과와 무관하게 1행씩 남긴다 — 조기 종료(unsupported_concept,
-    검색 0건 등)도 Gemini 호출 비용이 이미 발생했으므로 카운트해야 한다.
+    이 테이블을 그대로 세므로 별도 카운터 컬럼 불필요). Gemini를 호출한 실행은
+    결과와 무관하게 1행씩 남긴다 — 조기 종료(unsupported_concept, 검색 0건 등)도
+    비용이 이미 발생했으므로 카운트해야 한다. 예외는 ambiguous_input 하나로,
+    A1이 LLM 호출 전에 규칙으로 걸러내 비용이 0인 경로라 호출부(main.py의
+    generate)가 아예 이 함수를 부르지 않는다.
 
-    실패한 시도는 lesson_output이 빈 dict({})로 저장된다(NULL 아님). 재출력
-    가능 여부는 이 값이 비었는지로 판별한다 — validation_status에는 실패
-    사유 문구가 그대로 들어가는 자유 문자열이라 판별 기준이 못 된다."""
+    validation_status에는 PipelineStatus 값(`success`, `no_curriculum_match` 등)이
+    들어간다. 실패한 시도는 lesson_output이 빈 dict({})로 저장되며(NULL 아님),
+    재출력 가능 여부는 계속 이 값이 비었는지로 판별한다 — status를 봐도 되지만
+    "내려받을 교안이 실제로 있는가"를 직접 확인하는 편이 더 정확하다."""
     query = (
         "INSERT INTO lesson_requests "
         "(user_id, concept_name, target_grade, subject_hint, mapped_curriculum_code, "
