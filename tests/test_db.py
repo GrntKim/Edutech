@@ -264,6 +264,189 @@ def test_chunk_by_code_normalizes_brackets(monkeypatch):
     assert params_with == params_without == ("[4과02-01]",)
 
 
+# ---------- search_chunks / count_chunks / update_chunk (관리자 데이터 수정 API) ----------
+
+
+def _chunk_row(**overrides):
+    row = {
+        "chunk_id": "4과02-01",
+        "subject": "SCIENCE",
+        "grade_band": "G3_4",
+        "unit_name": "동물의 생활",
+        "domain": "생명",
+        "core_idea": "동물 분류",
+        "achievement_code": "[4과02-01]",
+        "achievement_text": "동물을 분류할 수 있다.",
+        "explanation": "관찰 가능한 특징을 기준으로 분류한다.",
+        "inquiry_activities": [],
+        "source_page": 12,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_search_chunks_without_filters_has_no_where_clause(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.search_chunks()
+
+    query, params = cursor.executed[0]
+    assert "WHERE" not in query
+    assert params == [50, 0]
+
+
+def test_search_chunks_query_uses_ilike_on_three_columns(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[_chunk_row()])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    result = db.search_chunks(query="분류")
+
+    query, params = cursor.executed[0]
+    assert "achievement_code ILIKE %s" in query
+    assert "unit_name ILIKE %s" in query
+    assert "achievement_text ILIKE %s" in query
+    assert params[:3] == ["%분류%", "%분류%", "%분류%"]
+    assert result[0].chunk_id == "4과02-01"
+
+
+def test_search_chunks_adds_subject_filter(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.search_chunks(subject=Subject.KOREAN)
+
+    query, params = cursor.executed[0]
+    assert "subject = %s" in query
+    assert "KOREAN" in params
+
+
+def test_search_chunks_paginates(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.search_chunks(limit=10, offset=20)
+
+    _, params = cursor.executed[0]
+    assert params[-2:] == [10, 20]
+
+
+def test_count_chunks_mirrors_search_filters(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 3})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    result = db.count_chunks(query="분류", subject=Subject.SCIENCE)
+
+    query, params = cursor.executed[0]
+    assert "count(*)" in query
+    assert "ILIKE" in query
+    assert "subject = %s" in query
+    assert result == 3
+
+
+def test_update_chunk_returns_updated_chunk(monkeypatch):
+    _set_valid_env(monkeypatch)
+    updated_row = _chunk_row(achievement_text="정정된 원문")
+    cursor = _FakeCursor(fetchone_result=updated_row)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    result = db.update_chunk(
+        "4과02-01",
+        unit_name="동물의 생활",
+        domain="생명",
+        core_idea="동물 분류",
+        achievement_text="정정된 원문",
+        explanation="관찰 가능한 특징을 기준으로 분류한다.",
+    )
+
+    assert result is not None
+    assert result.achievement_text == "정정된 원문"
+    query, params = cursor.executed[0]
+    assert "UPDATE curriculum_chunks" in query
+    assert "RETURNING" in query
+    assert params[-1] == "4과02-01"
+
+
+def test_update_chunk_returns_none_when_not_found(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    result = db.update_chunk(
+        "없는코드",
+        unit_name="x",
+        domain="x",
+        core_idea="x",
+        achievement_text="x",
+        explanation="x",
+    )
+
+    assert result is None
+
+
+def test_update_chunk_does_not_modify_identity_fields(monkeypatch):
+    """chunk_id/subject/grade_band/achievement_code는 SET 절에 없어야 한다 —
+    임베딩 캐시·골든셋이 chunk_id를 키로 참조하므로 여기서 바뀌면 안 된다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_chunk_row())
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.update_chunk(
+        "4과02-01",
+        unit_name="x",
+        domain="x",
+        core_idea="x",
+        achievement_text="x",
+        explanation="x",
+    )
+
+    query, _ = cursor.executed[0]
+    set_clause = query.split("SET", 1)[1].split("WHERE", 1)[0]
+    assert "chunk_id =" not in set_clause
+    assert "subject =" not in set_clause
+    assert "grade_band =" not in set_clause
+    assert "achievement_code =" not in set_clause
+
+
+def test_search_chunks_escapes_like_metacharacters(monkeypatch):
+    """검색어에 %나 _가 그대로 들어있으면 와일드카드가 아니라 리터럴로
+    매칭돼야 한다 — 안 그러면 '4_2' 검색이 '4a2' 같은 무관한 행까지 잡는다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    db.search_chunks(query="4_2%off")
+
+    _, params = cursor.executed[0]
+    assert params[0] == "%4\\_2\\%off%"
+
+
+def test_get_chunk_by_id_queries_by_chunk_id_column(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_chunk_row())
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    result = db.get_chunk_by_id("4과02-01")
+
+    query, params = cursor.executed[0]
+    assert "WHERE chunk_id = %s" in query
+    assert params == ("4과02-01",)
+    assert result.chunk_id == "4과02-01"
+
+
+def test_get_chunk_by_id_returns_none_when_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.get_chunk_by_id("없는코드") is None
+
+
 # ---------- 계정 · 세션 · 히스토리 (E, REQ-006) ----------
 
 

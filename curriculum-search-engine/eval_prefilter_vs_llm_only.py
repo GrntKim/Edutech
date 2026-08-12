@@ -80,7 +80,7 @@ async def main() -> None:
     all_chunks, emb_by_id = load_chunks_and_embeddings()
     print(f"평가 대상(있음) 행: {len(rows)}개\n")
 
-    fingerprint = corpus_fingerprint(CHUNKS_PATH)
+    fingerprint = corpus_fingerprint(CHUNKS_PATH, GOLDEN_PATH)
     done = load_cached_results(RESULTS_PATH, fingerprint)
     if done:
         print(f"이전 결과 {len(done)}개 재사용(코퍼스 지문 일치 확인됨)\n")

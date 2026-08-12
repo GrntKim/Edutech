@@ -17,9 +17,12 @@ from app import main
 from app.lib import auth, db
 from app.lib.types import (
     ConceptInput,
+    CurriculumChunk,
+    GradeBand,
     LessonRequest,
     PipelineResult,
     PipelineStatus,
+    Subject,
     User,
     ValidationResult,
 )
@@ -444,3 +447,188 @@ def test_mypage_detail_hides_download_for_failed_row(client, monkeypatch, user):
 
     assert "DOCX 재출력" not in body
     assert "생성에 실패한 요청입니다" in body
+
+
+# ---------- 관리자: 성취기준 관리(REQ-002 관리자용 데이터 수정 API) ----------
+
+
+def _chunk(**overrides) -> CurriculumChunk:
+    fields = {
+        "chunk_id": "4과02-01",
+        "subject": Subject.SCIENCE,
+        "grade_band": GradeBand.G3_4,
+        "unit_name": "동물의 생활",
+        "domain": "생명",
+        "core_idea": "동물 분류",
+        "achievement_code": "[4과02-01]",
+        "achievement_text": "동물을 분류할 수 있다.",
+        "explanation": "관찰 가능한 특징을 기준으로 분류한다.",
+        "inquiry_activities": [],
+        "source_page": 12,
+    }
+    fields.update(overrides)
+    return CurriculumChunk(**fields)
+
+
+def _as_admin():
+    admin = _user(role="admin")
+    main.app.dependency_overrides[auth.get_current_user] = lambda: admin
+    return admin
+
+
+def test_admin_chunks_forbidden_for_non_admin(client):
+    # client 픽스처의 기본 user는 role="user".
+    response = client.get("/admin/chunks")
+    assert response.status_code == 403
+
+
+def test_admin_chunks_lists_search_results(client, monkeypatch):
+    _as_admin()
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: [_chunk()])
+    monkeypatch.setattr(db, "count_chunks", lambda **kwargs: 1)
+
+    body = client.get("/admin/chunks").text
+
+    assert "4과02-01" in body
+    assert "동물의 생활" in body
+
+
+def test_admin_chunks_passes_query_and_subject_to_db(client, monkeypatch):
+    _as_admin()
+    calls = {}
+
+    def fake_search(**kwargs):
+        calls.update(kwargs)
+        return []
+
+    monkeypatch.setattr(db, "search_chunks", fake_search)
+    # total_pages(3) >= page(2)여야 클램프 없이 page=2 그대로 조회된다.
+    monkeypatch.setattr(db, "count_chunks", lambda **kwargs: main.ADMIN_CHUNKS_PAGE_SIZE * 3)
+
+    client.get("/admin/chunks", params={"q": "분류", "subject": "SCIENCE", "page": 2})
+
+    assert calls["query"] == "분류"
+    assert calls["subject"] == Subject.SCIENCE
+    assert calls["offset"] == main.ADMIN_CHUNKS_PAGE_SIZE  # page=2 → 두 번째 페이지 offset
+
+
+def test_admin_chunks_clamps_page_beyond_total_pages(client, monkeypatch):
+    """오래된 북마크 등으로 total_pages를 넘는 page가 오면 마지막 페이지로
+    되돌린다 — 안 그러면 결과가 있는데도 '검색 결과 없음'으로 보여 페이지네이션
+    링크 자체가 사라지고 되돌아올 방법이 없어진다."""
+    _as_admin()
+    calls = {}
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: calls.update(kwargs) or [_chunk()])
+    monkeypatch.setattr(db, "count_chunks", lambda **kwargs: 3)  # total_pages = 1
+
+    response = client.get("/admin/chunks", params={"page": 9999})
+
+    assert response.status_code == 200
+    assert calls["offset"] == 0  # 1페이지로 클램프
+
+
+def test_admin_chunks_ignores_invalid_subject_value(client, monkeypatch):
+    """오타·구버전 링크로 잘못된 subject 값이 들어와도 500이 아니라 필터 없음으로 처리."""
+    _as_admin()
+    calls = {}
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: calls.update(kwargs) or [])
+    monkeypatch.setattr(db, "count_chunks", lambda **kwargs: 0)
+
+    response = client.get("/admin/chunks", params={"subject": "존재안함"})
+
+    assert response.status_code == 200
+    assert calls["subject"] is None
+
+
+def test_admin_chunk_edit_form_404_when_missing(client, monkeypatch):
+    _as_admin()
+    monkeypatch.setattr(db, "get_chunk_by_id", lambda chunk_id: None)
+
+    assert client.get("/admin/chunks/없는코드/edit").status_code == 404
+
+
+def test_admin_chunk_edit_form_shows_existing_values(client, monkeypatch):
+    _as_admin()
+    monkeypatch.setattr(db, "get_chunk_by_id", lambda chunk_id: _chunk())
+
+    body = client.get("/admin/chunks/4과02-01/edit").text
+
+    assert "동물을 분류할 수 있다." in body
+
+
+def test_admin_chunk_update_saves_and_shows_new_values(client, monkeypatch):
+    _as_admin()
+    updated = _chunk(achievement_text="정정된 원문")
+    calls = {}
+
+    def fake_update(chunk_id, **kwargs):
+        calls["chunk_id"] = chunk_id
+        calls.update(kwargs)
+        return updated
+
+    monkeypatch.setattr(db, "update_chunk", fake_update)
+
+    response = client.post(
+        "/admin/chunks/4과02-01",
+        data={
+            "unit_name": "동물의 생활",
+            "domain": "생명",
+            "core_idea": "동물 분류",
+            "achievement_text": "정정된 원문",
+            "explanation": "관찰 가능한 특징을 기준으로 분류한다.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "정정된 원문" in response.text
+    assert calls["chunk_id"] == "4과02-01"
+
+
+def test_admin_chunk_update_cannot_override_identity_fields(client, monkeypatch):
+    """폼에 chunk_id/subject/achievement_code를 끼워 넣어도 라우트가 애초에 안 받는다
+    (FastAPI가 선언 안 된 폼 필드를 조용히 무시) — db.update_chunk에도 안 넘어간다."""
+    _as_admin()
+    calls = {}
+
+    def fake_update(chunk_id, **kwargs):
+        calls["chunk_id"] = chunk_id
+        calls.update(kwargs)
+        return _chunk()
+
+    monkeypatch.setattr(db, "update_chunk", fake_update)
+
+    client.post(
+        "/admin/chunks/4과02-01",
+        data={
+            "chunk_id": "다른코드",
+            "subject": "MATH",
+            "achievement_code": "[9수99-99]",
+            "unit_name": "x",
+            "domain": "x",
+            "core_idea": "x",
+            "achievement_text": "x",
+            "explanation": "x",
+        },
+    )
+
+    assert calls["chunk_id"] == "4과02-01"  # path 파라미터가 그대로 씀
+    assert "subject" not in calls
+    assert "achievement_code" not in calls
+
+
+def test_admin_chunk_update_404_when_missing(client, monkeypatch):
+    _as_admin()
+    monkeypatch.setattr(db, "update_chunk", lambda chunk_id, **kwargs: None)
+
+    response = client.post(
+        "/admin/chunks/없는코드",
+        data={
+            "unit_name": "x",
+            "domain": "x",
+            "core_idea": "x",
+            "achievement_text": "x",
+            "explanation": "x",
+        },
+    )
+
+    assert response.status_code == 404
