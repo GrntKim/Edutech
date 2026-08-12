@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>성취기준 관리 - Edutech</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
+        <nav class="site-nav">
+            <span>{{ admin.name }}님 (admin)</span>
+            <a href="/admin">관리자 대시보드</a>
+            <form method="post" action="/logout" style="display:inline">
+                <button type="submit">로그아웃</button>
+            </form>
+        </nav>
+    </header>
+    <main>
+        <h1>성취기준 관리</h1>
+        <p>코드·단원명·성취기준 원문으로 검색해 텍스트 오류(파싱 오류, 오탈자 등)를 직접 수정할 수 있습니다.</p>
+
+        <form method="get" action="/admin/chunks" class="info-form">
+            <div>
+                <label for="q-input">검색어</label>
+                <input type="text" id="q-input" name="q" value="{{ q }}" placeholder="예: 4과02-01, 분류, 동물의 생활"/>
+            </div>
+            <div>
+                <label for="subject-select">과목</label>
+                <select id="subject-select" name="subject">
+                    <option value="">전체</option>
+                    {% for s in subjects %}
+                    <option value="{{ s.value }}" {% if subject == s.value %}selected{% endif %}>{{ s.value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit">검색</button>
+        </form>
+
+        {% if items %}
+        <p>총 {{ total }}건</p>
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>코드</th>
+                    <th>과목</th>
+                    <th>학년군</th>
+                    <th>단원명</th>
+                    <th>성취기준 원문</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for chunk in items %}
+                <tr>
+                    <td>{{ chunk.achievement_code }}</td>
+                    <td>{{ chunk.subject.value }}</td>
+                    <td>{{ chunk.grade_band.value }}</td>
+                    <td>{{ chunk.unit_name }}</td>
+                    <td>{{ chunk.achievement_text[:60] }}{% if chunk.achievement_text|length > 60 %}...{% endif %}</td>
+                    <td><a href="/admin/chunks/{{ chunk.chunk_id }}/edit">수정</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="pagination">
+            {% if page > 1 %}
+            <a href="/admin/chunks?q={{ q|urlencode }}&subject={{ subject|urlencode }}&page={{ page - 1 }}">이전</a>
+            {% endif %}
+            <span>{{ page }} / {{ total_pages }}</span>
+            {% if page < total_pages %}
+            <a href="/admin/chunks?q={{ q|urlencode }}&subject={{ subject|urlencode }}&page={{ page + 1 }}">다음</a>
+            {% endif %}
+        </div>
+        {% else %}
+        <p>검색 결과가 없습니다.</p>
+        {% endif %}
+    </main>
+    <footer class="site-footer">
+        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
+    </footer>
+</body>
+</html>

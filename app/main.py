@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from app.agents.lesson_generate import LessonOutput, render_lesson_docx
 from app.agents.orchestrate import run_pipeline
 from app.lib import auth, db
-from app.lib.types import ConceptInput, LessonRequest, PipelineResult, User
+from app.lib.types import ConceptInput, LessonRequest, PipelineResult, Subject, User
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 MYPAGE_PAGE_SIZE = 10
+ADMIN_CHUNKS_PAGE_SIZE = 20
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -315,6 +316,104 @@ def delete_lesson_request(request_id: UUID, user: User = Depends(auth.get_curren
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request, admin: User = Depends(auth.require_admin)):
     return templates.TemplateResponse(request, "admin.html", {"admin": admin})
+
+
+def _parse_subject_query(value: str | None) -> Subject | None:
+    """쿼리스트링의 과목 값을 Subject로 변환한다. 잘못된 값(오타·구버전 링크
+    등)은 500 대신 "필터 없음"으로 조용히 처리한다 — 관리자 검색 화면은
+    필터가 아니라 목록 자체가 핵심이라 잘못된 필터로 전체가 막히면 안 된다."""
+    if not value:
+        return None
+    try:
+        return Subject(value)
+    except ValueError:
+        return None
+
+
+@app.get("/admin/chunks", response_class=HTMLResponse)
+def admin_chunks(
+    request: Request,
+    q: str | None = None,
+    subject: str | None = None,
+    page: int = 1,
+    admin: User = Depends(auth.require_admin),
+):
+    """성취기준 검색·목록(RS-004 관리자용 데이터 수정 API 진입점).
+
+    mypage.html과 동일하게 일반 GET 쿼리스트링 기반 페이지네이션을 쓴다(이
+    화면만 htmx 조각 응답을 도입할 이유가 없음 — admin 화면 전반이 풀 페이지
+    네비게이션 패턴).
+    """
+    page = max(page, 1)
+    subject_filter = _parse_subject_query(subject)
+
+    total = db.count_chunks(query=q, subject=subject_filter)
+    total_pages = max((total + ADMIN_CHUNKS_PAGE_SIZE - 1) // ADMIN_CHUNKS_PAGE_SIZE, 1)
+    # total_pages보다 큰 page 요청(오래된 북마크 등)은 그대로 offset을 키워
+    # 빈 목록을 내려주면 안 된다 — items가 비면 템플릿이 "검색 결과 없음"
+    # 분기를 타 페이지네이션 링크 자체가 사라지고, 관리자가 URL을 직접 고치는
+    # 것 외에는 되돌아올 방법이 없어진다.
+    page = min(page, total_pages)
+    offset = (page - 1) * ADMIN_CHUNKS_PAGE_SIZE
+
+    items = db.search_chunks(
+        query=q, subject=subject_filter, limit=ADMIN_CHUNKS_PAGE_SIZE, offset=offset
+    )
+
+    context = {
+        "admin": admin,
+        "items": items,
+        "q": q or "",
+        "subject": subject or "",
+        "subjects": list(Subject),
+        "page": page,
+        "total_pages": total_pages,
+        "total": total,
+    }
+    return templates.TemplateResponse(request, "admin_chunks.html", context)
+
+
+@app.get("/admin/chunks/{chunk_id}/edit", response_class=HTMLResponse)
+def admin_chunk_edit_form(
+    request: Request, chunk_id: str, admin: User = Depends(auth.require_admin)
+):
+    chunk = db.get_chunk_by_id(chunk_id)
+    if chunk is None:
+        raise HTTPException(status_code=404, detail="성취기준을 찾을 수 없습니다.")
+    return templates.TemplateResponse(
+        request, "admin_chunk_edit.html", {"admin": admin, "chunk": chunk, "saved": False}
+    )
+
+
+@app.post("/admin/chunks/{chunk_id}", response_class=HTMLResponse)
+def admin_chunk_update(
+    request: Request,
+    chunk_id: str,
+    unit_name: str = Form(...),
+    domain: str = Form(...),
+    core_idea: str = Form(...),
+    achievement_text: str = Form(...),
+    explanation: str = Form(...),
+    admin: User = Depends(auth.require_admin),
+):
+    """텍스트 콘텐츠만 수정한다 — chunk_id/subject/grade_band/achievement_code는
+    폼에 없다(db.update_chunk가 애초에 안 받음, REQ-002 §RS-000-3 데이터 계약
+    보호). 임베딩은 재계산하지 않는다(db.update_chunk 문서 참고) — 텍스트를
+    많이 고친 성취기준은 별도 재적재가 필요할 수 있음을 관리자가 알아야 한다.
+    """
+    updated = db.update_chunk(
+        chunk_id,
+        unit_name=unit_name,
+        domain=domain,
+        core_idea=core_idea,
+        achievement_text=achievement_text,
+        explanation=explanation,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="성취기준을 찾을 수 없습니다.")
+    return templates.TemplateResponse(
+        request, "admin_chunk_edit.html", {"admin": admin, "chunk": updated, "saved": True}
+    )
 
 
 def _is_htmx_request(request: Request) -> bool:

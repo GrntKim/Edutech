@@ -234,6 +234,114 @@ def get_scope_summary() -> list[tuple[Subject, GradeBand, int]]:
     ]
 
 
+def _escape_like(value: str) -> str:
+    """ILIKE 패턴에서 %/_는 와일드카드로 해석된다 — 검색어에 그 문자가 그대로
+    들어있어도 리터럴로 매칭되도록 이스케이프한다(기본 이스케이프 문자는
+    백슬래시). 안 하면 단원명에 `_`가 들어간 코드를 검색할 때 한 글자
+    와일드카드로 해석돼 무관한 행까지 걸린다."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _chunk_filter(query: str | None, subject: Subject | None) -> tuple[str, list[object]]:
+    """search_chunks/count_chunks가 공유하는 WHERE절 구성. 필터를 한쪽에만
+    추가하면 목록과 총건수(페이지네이션 분모)가 조용히 어긋나므로 반드시
+    이 헬퍼를 함께 쓴다."""
+    conditions: list[str] = []
+    params: list[object] = []
+    if query:
+        conditions.append(
+            "(achievement_code ILIKE %s OR unit_name ILIKE %s OR achievement_text ILIKE %s)"
+        )
+        like = f"%{_escape_like(query)}%"
+        params.extend([like, like, like])
+    if subject is not None:
+        conditions.append("subject = %s")
+        params.append(subject.value)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where, params
+
+
+def search_chunks(
+    query: str | None = None,
+    subject: Subject | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[CurriculumChunk]:
+    """관리자 화면의 성취기준 검색·목록 조회(REQ-002 관리자용 데이터 수정 API).
+
+    query는 achievement_code/unit_name/achievement_text 부분일치(ILIKE)로 찾는다 —
+    관리자가 정확한 코드를 모르고 단원명이나 원문 일부만 기억하는 경우가 많아서다.
+    """
+    where, params = _chunk_filter(query, subject)
+    sql = f"SELECT {_CHUNK_COLUMNS} FROM {TABLE_NAME} {where} ORDER BY chunk_id LIMIT %s OFFSET %s"
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(sql, [*params, limit, offset])
+        rows = cur.fetchall()
+    return [CurriculumChunk(**row) for row in rows]
+
+
+def count_chunks(query: str | None = None, subject: Subject | None = None) -> int:
+    """search_chunks와 동일한 필터의 총 개수(관리자 화면 페이지네이션용)."""
+    where, params = _chunk_filter(query, subject)
+    sql = f"SELECT count(*) AS n FROM {TABLE_NAME} {where}"
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+    return row["n"]
+
+
+def get_chunk_by_id(chunk_id: str) -> CurriculumChunk | None:
+    """chunk_id 컬럼으로 단건 조회. update_chunk와 동일한 키(chunk_id)로 조회해
+    관리자 수정 폼(조회)과 저장(갱신)이 항상 같은 행을 가리키도록 보장한다 —
+    get_chunk_by_code(achievement_code 컬럼 기준)를 대신 썼다면 현재는
+    chunk_id와 1:1 대응해 우연히 맞지만, 그 대응은 ingest_curriculum.py의
+    구현 세부사항이지 이 함수의 계약이 아니다."""
+    query = f"SELECT {_CHUNK_COLUMNS} FROM {TABLE_NAME} WHERE chunk_id = %s"
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (chunk_id,))
+        row = cur.fetchone()
+    return CurriculumChunk(**row) if row is not None else None
+
+
+def update_chunk(
+    chunk_id: str,
+    *,
+    unit_name: str,
+    domain: str,
+    core_idea: str,
+    achievement_text: str,
+    explanation: str,
+) -> CurriculumChunk | None:
+    """관리자가 파싱 오류·오탈자 등 콘텐츠를 직접 수정하는 경로. 존재하지 않는
+    chunk_id면 None.
+
+    chunk_id/subject/grade_band/achievement_code는 여기서 바꾸지 않는다 —
+    chunk_id는 임베딩 캐시(app/data/embeddings_cache/*.npz)와 골든셋
+    (RS-005_골든셋.csv)이 참조하는 키라 여기서 바뀌면 두 곳이 조용히 깨진다.
+    구조적 정정(코드·학년군 자체가 틀린 경우)은 관리자 API 범위 밖 —
+    ingest_curriculum.py 재실행 대상이다.
+
+    주의(재임베딩 미포함): achievement_text/explanation을 바꾸면 Cloud SQL에
+    저장된 dense 임베딩 벡터가 새 텍스트와 더 이상 일치하지 않게 된다. 이 함수는
+    텍스트만 갱신하고 재임베딩은 하지 않는다 — 임베딩 모델 로드가 무거워
+    요청-응답 경로에 넣기 부적절하기 때문이다(별도 배치 재적재로 후속 처리 필요,
+    RS-006 후속 과제).
+    """
+    sql = f"""
+        UPDATE {TABLE_NAME}
+        SET unit_name = %s, domain = %s, core_idea = %s,
+            achievement_text = %s, explanation = %s
+        WHERE chunk_id = %s
+        RETURNING {_CHUNK_COLUMNS}
+    """
+    params = (unit_name, domain, core_idea, achievement_text, explanation, chunk_id)
+
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+    return CurriculumChunk(**row) if row is not None else None
+
+
 # ── 계정 · 세션 · 히스토리 (E, REQ-006) ──────────────────────────
 
 

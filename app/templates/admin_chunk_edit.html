@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>성취기준 수정 - Edutech</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
+        <nav class="site-nav">
+            <span>{{ admin.name }}님 (admin)</span>
+            <a href="/admin/chunks">성취기준 목록</a>
+            <form method="post" action="/logout" style="display:inline">
+                <button type="submit">로그아웃</button>
+            </form>
+        </nav>
+    </header>
+    <main>
+        <h1>성취기준 수정 — {{ chunk.achievement_code }}</h1>
+
+        {% if saved %}
+        <div class="notice">저장되었습니다.</div>
+        {% endif %}
+        <div class="notice">
+            임베딩은 자동으로 다시 계산되지 않습니다. 원문을 크게 바꿨다면 검색 결과에
+            즉시 반영되지 않을 수 있습니다 — 재적재가 필요한지 담당자와 확인해 주세요.
+        </div>
+
+        <dl>
+            <dt>chunk_id</dt><dd>{{ chunk.chunk_id }}</dd>
+            <dt>과목</dt><dd>{{ chunk.subject.value }}</dd>
+            <dt>학년군</dt><dd>{{ chunk.grade_band.value }}</dd>
+        </dl>
+
+        <form method="post" action="/admin/chunks/{{ chunk.chunk_id }}" class="info-form">
+            <div>
+                <label for="unit_name-input">단원명</label>
+                <input type="text" id="unit_name-input" name="unit_name" value="{{ chunk.unit_name }}" required/>
+            </div>
+            <div>
+                <label for="domain-input">영역</label>
+                <input type="text" id="domain-input" name="domain" value="{{ chunk.domain }}" required/>
+            </div>
+            <div>
+                <label for="core_idea-input">핵심 아이디어</label>
+                <textarea id="core_idea-input" name="core_idea" rows="2" required>{{ chunk.core_idea }}</textarea>
+            </div>
+            <div>
+                <label for="achievement_text-input">성취기준 원문</label>
+                <textarea id="achievement_text-input" name="achievement_text" rows="4" required>{{ chunk.achievement_text }}</textarea>
+            </div>
+            <div>
+                <label for="explanation-input">해설</label>
+                <textarea id="explanation-input" name="explanation" rows="4">{{ chunk.explanation }}</textarea>
+            </div>
+            <button type="submit">저장</button>
+        </form>
+    </main>
+    <footer class="site-footer">
+        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
+    </footer>
+</body>
+</html>
