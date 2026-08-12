@@ -151,7 +151,11 @@ def main() -> None:
 
         t = time.monotonic()
         validation = orchestrate.validate(
-            lesson_plan, context, subject=mapping.subject, caution_terms=concept.caution_terms
+            lesson_plan,
+            context,
+            subject=mapping.subject,
+            caution_terms=concept.caution_terms,
+            concept_name=concept.concept_name,
         )
         print(f"[D 검증] passed={validation.passed} ({_ms(t)})")
         if not validation.passed:

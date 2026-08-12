@@ -191,6 +191,9 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
                     context,
                     subject=mapping.subject,
                     caution_terms=concept_result.concept.caution_terms,
+                    # D의 자기참조 금지어 제외(#50)에 필요하다. PipelineContext에
+                    # 없는 값이라 A1 결과에서 직접 꺼내 넘긴다.
+                    concept_name=concept_result.concept.concept_name,
                 )
                 logger.info(
                     f"stage_end stage=D passed={new_validation.passed} "

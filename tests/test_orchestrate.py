@@ -144,6 +144,7 @@ class TestAgentContractSignatures:
             ("context", "POSITIONAL_OR_KEYWORD", False),
             ("subject", "KEYWORD_ONLY", False),
             ("caution_terms", "KEYWORD_ONLY", False),
+            ("concept_name", "KEYWORD_ONLY", False),
         ]
 
     def test_generate_lesson_signature(self):
@@ -179,7 +180,7 @@ def test_normal_flow_returns_pipeline_result(monkeypatch):
         calls.append("C")
         return {"title": "완성 교안"}
 
-    def fake_validate(lesson_plan, ctx, *, subject, caution_terms):
+    def fake_validate(lesson_plan, ctx, *, subject, caution_terms, concept_name):
         calls.append("D")
         return ValidationResult(passed=True)
 
@@ -276,7 +277,7 @@ def test_map_concept_receives_context(monkeypatch):
     monkeypatch.setattr(orchestrate, "map_concept", fake_map_concept)
     monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
     monkeypatch.setattr(
-        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms: ValidationResult(passed=True)
+        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms, concept_name: ValidationResult(passed=True)
     )
 
     orchestrate.run_pipeline(ConceptInput(raw_concept_name="분류", target_grade=5, subject_hint=None))
@@ -305,7 +306,7 @@ def test_validation_retries_once_then_passes(monkeypatch):
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
     monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
     monkeypatch.setattr(
-        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms: validation_queue.pop(0)
+        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms, concept_name: validation_queue.pop(0)
     )
 
     result = orchestrate.run_pipeline(
@@ -331,7 +332,7 @@ def test_validation_exhausts_retries(monkeypatch):
         call_count["c"] += 1
         return {"attempt": call_count["c"]}
 
-    def fake_validate(lp, ctx, *, subject, caution_terms):
+    def fake_validate(lp, ctx, *, subject, caution_terms, concept_name):
         call_count["d"] += 1
         return ValidationResult(passed=False, violations=["금지어"], retry_feedback="다시 생성")
 
@@ -368,7 +369,7 @@ def test_validation_diverges_stops_before_max_retries(monkeypatch):
         call_count["c"] += 1
         return {"attempt": call_count["c"]}
 
-    def fake_validate(lp, ctx, *, subject, caution_terms):
+    def fake_validate(lp, ctx, *, subject, caution_terms, concept_name):
         call_count["d"] += 1
         return validation_queue.pop(0)
 
@@ -411,7 +412,7 @@ def test_validation_partial_overlap_continues(monkeypatch):
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
     monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
     monkeypatch.setattr(
-        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms: validation_queue.pop(0)
+        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms, concept_name: validation_queue.pop(0)
     )
 
     result = orchestrate.run_pipeline(
@@ -445,7 +446,7 @@ def test_first_validation_failure_alone_does_not_trigger_divergence(monkeypatch)
     monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
     monkeypatch.setattr(orchestrate, "generate_lesson", fake_generate_lesson)
     monkeypatch.setattr(
-        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms: validation_queue.pop(0)
+        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms, concept_name: validation_queue.pop(0)
     )
 
     result = orchestrate.run_pipeline(
@@ -469,7 +470,7 @@ def test_validate_receives_caution_terms_from_a1(monkeypatch):
     mapping = _make_mapping()
     received = {}
 
-    def fake_validate(lp, ctx, *, subject, caution_terms):
+    def fake_validate(lp, ctx, *, subject, caution_terms, concept_name):
         received["caution_terms"] = caution_terms
         return ValidationResult(passed=True)
 
@@ -484,6 +485,33 @@ def test_validate_receives_caution_terms_from_a1(monkeypatch):
     assert received["caution_terms"] == ["과적합", "오버피팅"]
 
 
+def test_validate_receives_concept_name_from_a1(monkeypatch):
+    """자기참조 금지어 제외(#50)에 쓸 concept_name은 A1이 구조화한 값이어야 한다.
+
+    사용자 원문(raw_concept_name)이 아니라 StructuredConcept.concept_name을 넘긴다.
+    """
+    concept_result = _make_concept_result(concept_name="패턴 인식")
+    search_results = _make_search_results()
+    mapping = _make_mapping()
+    received = {}
+
+    def fake_validate(lp, ctx, *, subject, caution_terms, concept_name):
+        received["concept_name"] = concept_name
+        return ValidationResult(passed=True)
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda q: search_results)
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: mapping)
+    monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
+    monkeypatch.setattr(orchestrate, "validate", fake_validate)
+
+    orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="패턴인식 알려줘", target_grade=5, subject_hint=None)
+    )
+
+    assert received["concept_name"] == "패턴 인식"
+
+
 def test_validate_receives_subject_from_mapping_not_context(monkeypatch):
     """검증 호출 시 subject는 MappingResult.subject에서 오며 context.subject_hint가 아니다."""
     concept_result = _make_concept_result()
@@ -491,7 +519,7 @@ def test_validate_receives_subject_from_mapping_not_context(monkeypatch):
     mapping = _make_mapping(subject=Subject.ART)
     received = {}
 
-    def fake_validate(lp, ctx, *, subject, caution_terms):
+    def fake_validate(lp, ctx, *, subject, caution_terms, concept_name):
         received["subject"] = subject
         received["context_subject_hint"] = ctx.subject_hint
         return ValidationResult(passed=True)
@@ -521,7 +549,7 @@ def test_gemini_error_during_retry_falls_back_to_last_success(monkeypatch):
             raise GeminiError("일시적 오류")
         return {"attempt": call_count["c"]}
 
-    def fake_validate(lp, ctx, *, subject, caution_terms):
+    def fake_validate(lp, ctx, *, subject, caution_terms, concept_name):
         return ValidationResult(passed=False, violations=["금지어"], retry_feedback="다시 생성")
 
     monkeypatch.setattr(orchestrate, "collect_concept", lambda ui, ctx: concept_result)
@@ -603,7 +631,7 @@ def test_pipeline_context_subject_hint_is_none(monkeypatch):
     monkeypatch.setattr(orchestrate, "map_concept", fake_map_concept)
     monkeypatch.setattr(orchestrate, "generate_lesson", lambda m, ctx, retry_feedback=None: {"title": "t"})
     monkeypatch.setattr(
-        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms: ValidationResult(passed=True)
+        orchestrate, "validate", lambda lp, ctx, *, subject, caution_terms, concept_name: ValidationResult(passed=True)
     )
 
     orchestrate.run_pipeline(ConceptInput(raw_concept_name="분류", target_grade=3, subject_hint=None))
