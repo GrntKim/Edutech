@@ -109,6 +109,10 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 def check_rate_limit(user: User) -> RateLimitStatus:
     """admin은 무제한. user는 일 5회/주 15회 롤링 윈도우, 하나라도 초과하면 차단.
 
+    파이프라인을 실행한 요청은 실패해도(A1 조기 종료·검색 0건·에이전트 예외)
+    lesson_requests에 1행 남으므로 이 카운트에 잡힌다 — 실패해도 Gemini 호출
+    비용은 이미 발생하기 때문이다.
+
     재출력(redownload)은 파이프라인을 실행하지 않으므로 lesson_requests에
     INSERT되지 않고, 따라서 이 카운트에도 잡히지 않는다.
     """

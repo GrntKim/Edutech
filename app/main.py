@@ -5,20 +5,19 @@
 
 import logging
 import re
-import tempfile
 from pathlib import Path
 from urllib.parse import quote
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import Cookie, Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.agents.lesson_generate import LessonOutput, render_lesson_docx
 from app.agents.orchestrate import run_pipeline
 from app.lib import auth, db
-from app.lib.types import ConceptInput, User
+from app.lib.types import ConceptInput, LessonRequest, PipelineResult, User
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +27,7 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
-# 생성된 DOCX는 서버에 영구 보관하지 않는다 — 요청마다 시스템 임시 디렉터리에
-# 써 두고 다운로드 라우트가 즉시 서빙한다. app/data/ 대신 tempdir을 쓰면
-# git 추적·정리 걱정 없이 재시작 시 자연히 사라진다.
-_DOCX_DIR = Path(tempfile.gettempdir()) / "edutech_docx"
-_DOCX_DIR.mkdir(parents=True, exist_ok=True)
-
-# UUID(hex) + .docx 형태만 허용 — 사용자가 URL의 filename을 임의로 바꿔
-# 경로 조작을 시도해도 이 패턴에 안 맞으면 무조건 404로 막는다.
-_DOCX_FILENAME_RE = re.compile(r"^[0-9a-f]{32}\.docx$")
+DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 MYPAGE_PAGE_SIZE = 10
 
@@ -44,6 +35,71 @@ MYPAGE_PAGE_SIZE = 10
 @app.get("/", response_class=HTMLResponse)
 def read_root(request: Request, user: User | None = Depends(auth.get_optional_user)):
     return templates.TemplateResponse(request, "index.html", {"user": user})
+
+
+def _record_attempt(
+    user: User, concept: str, grade: int, result: PipelineResult | None
+) -> LessonRequest | None:
+    """파이프라인을 실행한 요청을 결과와 무관하게 lesson_requests에 남긴다.
+
+    이 INSERT 자체가 레이트리밋 카운트다(count_lesson_requests_since가 이
+    테이블을 센다). A1 조기 종료(unsupported_concept)나 A2 검색 0건도 이미
+    Gemini를 호출해 비용이 발생한 뒤이므로 반드시 카운트한다 — 예전에는
+    lesson_plan이 비면 저장을 건너뛰어, 0건이 재현되는 조합을 반복 클릭하면
+    한도 없이 API를 쓸 수 있었다.
+
+    실패 시도는 lesson_output이 빈 dict로 남는다(NULL이 아니므로 DDL 변경
+    불필요). 마이페이지·재출력은 이 값이 비었는지로 실패 행을 판별한다 —
+    validation_status는 경고 문구가 그대로 들어가는 자유 문자열이라 판별에
+    쓸 수 없다.
+
+    result=None은 run_pipeline이 예외로 죽은 경우.
+    """
+    lesson_plan = result.lesson_plan if result is not None else {}
+    if result is None:
+        status = "pipeline_error"
+    else:
+        status = "passed" if result.validation.passed else (result.warning or "failed")
+
+    try:
+        return db.create_lesson_request(
+            user_id=user.id,
+            concept_name=concept,
+            target_grade=grade,
+            subject_hint=None,
+            mapped_curriculum_code=lesson_plan.get("achievement_code"),
+            lesson_output=lesson_plan,
+            validation_status=status,
+        )
+    except Exception:
+        logger.exception("lesson_request_save_failed")
+        return None
+
+
+def _docx_response(docx_bytes: bytes, raw_title: str) -> Response:
+    """DOCX 바이트를 첨부파일 응답으로 감싼다 — 디스크에 아무것도 남기지 않는다.
+
+    FileResponse가 대신 해 주던 파일명 인코딩을 직접 처리한다. 한글 파일명은
+    RFC 5987 filename*(UTF-8 percent-encoding)으로 내려야 깨지지 않고, 그걸
+    모르는 클라이언트를 위해 ASCII 폴백을 filename=에 함께 둔다.
+
+    경로 구분자와 제어문자는 제거한다 — 파일명이 경로로 해석되거나 개행이
+    Content-Disposition 헤더에 섞여 들어가는 것을 막기 위함이다.
+    """
+    safe_title = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]', "", raw_title).strip() or "교안"
+    filename = f"{safe_title}.docx"
+    ascii_fallback = re.sub(r"[^\x20-\x7e]", "_", filename).strip("_") or "lesson_plan.docx"
+
+    return Response(
+        content=docx_bytes,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_fallback}"; '
+                f"filename*=UTF-8''{quote(filename)}"
+            )
+        },
+    )
 
 
 @app.post("/generate", response_class=HTMLResponse)
@@ -61,6 +117,9 @@ def generate(
 
     실제 파이프라인을 실행하는 요청만 레이트리밋 대상이다(재출력은 별도
     라우트라 여기 안 걸림). admin은 check_rate_limit이 항상 allowed=True.
+
+    DOCX는 여기서 만들지 않는다 — 다운로드 링크는 저장된 lesson_output으로
+    그때그때 재생성하는 라우트를 가리킨다(인스턴스 로컬 파일 의존 제거).
     """
     rate_status = auth.check_rate_limit(user)
     if not rate_status.allowed:
@@ -72,70 +131,30 @@ def generate(
             ),
         )
 
-    result = run_pipeline(
-        ConceptInput(
-            raw_concept_name=concept,
-            target_grade=grade,
-            subject_hint=None,
-        )
-    )
-
-    docx_name = None
-    if result.lesson_plan:
-        try:
-            lesson = LessonOutput(**result.lesson_plan)
-            docx_bytes = render_lesson_docx(lesson)
-            candidate_name = f"{uuid4().hex}.docx"
-            (_DOCX_DIR / candidate_name).write_bytes(docx_bytes)
-            docx_name = candidate_name
-        except Exception:
-            # DOCX 생성 실패가 교안 렌더링 자체를 막으면 안 된다 — 버튼만 숨긴다.
-            logger.exception("docx_export_failed")
-
-        # 검증까지 끝나 재출력 가능한 lesson_plan이 나온 요청만 히스토리에
-        # 저장한다(A1 조기 종료 등 lesson_plan={}인 경우는 저장 안 함 —
-        # 저장이 곧 레이트리밋 카운트 대상이므로 이게 카운트 기준이기도 하다).
-        try:
-            db.create_lesson_request(
-                user_id=user.id,
-                concept_name=concept,
+    try:
+        result = run_pipeline(
+            ConceptInput(
+                raw_concept_name=concept,
                 target_grade=grade,
                 subject_hint=None,
-                mapped_curriculum_code=result.lesson_plan.get("achievement_code"),
-                lesson_output=result.lesson_plan,
-                validation_status="passed" if result.validation.passed else (result.warning or "failed"),
             )
-        except Exception:
-            logger.exception("lesson_request_save_failed")
+        )
+    except Exception:
+        # 예외로 죽어도 여기까지 온 Gemini 호출 비용은 이미 발생했다 — 카운트하고 넘긴다.
+        _record_attempt(user, concept, grade, None)
+        raise
+
+    saved = _record_attempt(user, concept, grade, result)
 
     return templates.TemplateResponse(
         request,
         "result.html",
-        {"lesson": result.lesson_plan, "warning": result.warning, "docx_name": docx_name},
-    )
-
-
-@app.get("/download/{filename}")
-def download(filename: str, title: str = "교안"):
-    """생성 시점에 저장해 둔 DOCX를 서빙한다.
-
-    filename은 UUID(hex)+.docx 형태만 허용해 경로 조작을 막는다(사용자
-    입력이 파일시스템 경로에 그대로 들어가지 않도록). title은 다운로드
-    파일명 표시용일 뿐 경로에는 쓰이지 않지만, 구분자 문자는 제거해
-    Content-Disposition 헤더 인젝션 여지를 줄인다.
-    """
-    if not _DOCX_FILENAME_RE.match(filename):
-        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
-
-    path = _DOCX_DIR / filename
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
-
-    safe_title = re.sub(r'[\\/:*?"<>|]', "", title).strip() or "교안"
-    return FileResponse(
-        path,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=f"{safe_title}.docx",
+        {
+            "lesson": result.lesson_plan,
+            "warning": result.warning,
+            # 저장에 실패했으면 다운로드할 근거(lesson_requests 행)가 없으므로 버튼을 숨긴다.
+            "request_id": saved.id if saved is not None and saved.lesson_output else None,
+        },
     )
 
 
@@ -244,12 +263,25 @@ def mypage_request_detail(
     return templates.TemplateResponse(request, "mypage_detail.html", {"user": user, "item": item})
 
 
-@app.post("/mypage/requests/{request_id}/redownload")
+@app.get("/mypage/requests/{request_id}/redownload")
 def redownload(request_id: UUID, user: User = Depends(auth.get_current_user)):
-    """저장된 lesson_output으로 DOCX만 재생성한다 — 에이전트/파이프라인 호출이
-    없으므로 레이트리밋 대상이 아니다(generate()의 create_lesson_request 저장을
-    거치지 않는다)."""
+    """저장된 lesson_output으로 DOCX를 재생성해 바이트를 그대로 반환한다.
+
+    생성 직후 다운로드와 마이페이지 재출력이 모두 이 라우트를 쓴다. 파일을
+    디스크에 두지 않으므로 Cloud Run이 요청마다 다른 인스턴스로 라우팅하거나
+    인스턴스를 재활용해도 깨지지 않는다(이전 구조는 tempdir 파일 + 303
+    리다이렉트라 리다이렉트된 요청이 다른 인스턴스에 닿으면 404였다).
+
+    에이전트/파이프라인 호출이 없으므로 레이트리밋 대상이 아니다 —
+    _record_attempt를 거치지 않는다. 상태를 바꾸지 않는 순수 조회라 GET이다.
+    """
     item = _get_owned_lesson_request(request_id, user)
+
+    # 파이프라인이 조기 종료한 실패 기록은 lesson_output이 비어 있다.
+    if not item.lesson_output:
+        raise HTTPException(
+            status_code=400, detail="생성에 실패한 요청이라 내려받을 교안이 없습니다."
+        )
 
     try:
         lesson = LessonOutput(**item.lesson_output)
@@ -260,12 +292,8 @@ def redownload(request_id: UUID, user: User = Depends(auth.get_current_user)):
         logger.exception("redownload_docx_failed request_id=%s", request_id)
         raise HTTPException(status_code=400, detail="이 기록은 재출력할 수 없습니다(저장된 형식이 최신 양식과 다릅니다).")
 
-    candidate_name = f"{uuid4().hex}.docx"
-    (_DOCX_DIR / candidate_name).write_bytes(docx_bytes)
-
-    return RedirectResponse(
-        url=f"/download/{candidate_name}?title={quote(item.concept_name)}", status_code=303
-    )
+    # 결과 화면과 파일명을 맞추기 위해 교안의 topic을 우선 쓴다(없으면 입력 개념명).
+    return _docx_response(docx_bytes, item.lesson_output.get("topic") or item.concept_name)
 
 
 @app.post("/mypage/requests/{request_id}/delete")

@@ -237,8 +237,8 @@
 <div class="lesson-sheet">
     <h1>교수학습과정안</h1>
 
-    {% if docx_name %}
-    <a href="/download/{{ docx_name }}?title={{ lesson.topic | urlencode }}" class="download-btn">DOCX 다운로드</a>
+    {% if request_id %}
+    <a href="/mypage/requests/{{ request_id }}/redownload" class="download-btn">DOCX 다운로드</a>
     {% endif %}
 
     <table class="form meta">

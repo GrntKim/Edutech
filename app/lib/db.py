@@ -313,9 +313,13 @@ def create_lesson_request(
     validation_status: str,
 ) -> LessonRequest:
     """이 INSERT 자체가 레이트리밋 카운트 대상이다(count_lesson_requests_since가
-    이 테이블을 그대로 세므로 별도 카운터 컬럼 불필요). 파이프라인이 검증까지
-    끝나 재출력 가능한 lesson_output이 나왔을 때만 호출한다 — 조기 종료
-    (unsupported_concept 등, lesson_plan={})는 저장하지 않는다."""
+    이 테이블을 그대로 세므로 별도 카운터 컬럼 불필요). 파이프라인을 실행한
+    요청은 결과와 무관하게 1행씩 남긴다 — 조기 종료(unsupported_concept,
+    검색 0건 등)도 Gemini 호출 비용이 이미 발생했으므로 카운트해야 한다.
+
+    실패한 시도는 lesson_output이 빈 dict({})로 저장된다(NULL 아님). 재출력
+    가능 여부는 이 값이 비었는지로 판별한다 — validation_status에는 실패
+    사유 문구가 그대로 들어가는 자유 문자열이라 판별 기준이 못 된다."""
     query = (
         "INSERT INTO lesson_requests "
         "(user_id, concept_name, target_grade, subject_hint, mapped_curriculum_code, "
