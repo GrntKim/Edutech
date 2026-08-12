@@ -18,6 +18,7 @@ from app.lib.types import (
     MappingResult,
     PipelineContext,
     PipelineResult,
+    PipelineStatus,
     SearchQuery,
     SearchResult,
     StructuredConcept,
@@ -235,7 +236,26 @@ def test_concept_collect_result_status_literal(sample_concept):
 def test_pipeline_result_warning_optional():
     """PipelineResult는 warning=None으로도, 경고 문구를 넣어도 생성된다."""
     vr = ValidationResult(passed=True)
-    no_warning = PipelineResult(lesson_plan={}, validation=vr, warning=None)
-    with_warning = PipelineResult(lesson_plan={}, validation=vr, warning="주의: 학년 범위 초과")
+    no_warning = PipelineResult(
+        lesson_plan={}, validation=vr, status=PipelineStatus.SUCCESS, warning=None
+    )
+    with_warning = PipelineResult(
+        lesson_plan={},
+        validation=vr,
+        status=PipelineStatus.MAX_RETRIES_EXCEEDED,
+        warning="주의: 학년 범위 초과",
+    )
     assert no_warning.warning is None
     assert with_warning.warning == "주의: 학년 범위 초과"
+
+
+def test_pipeline_result_status_is_required():
+    """status에 기본값을 두면 새 조기 종료 경로가 조용히 success로 기록된다."""
+    with pytest.raises(ValidationError):
+        PipelineResult(lesson_plan={}, validation=ValidationResult(passed=True))
+
+
+def test_pipeline_status_values_match_concept_collect_status():
+    """A1의 status 문자열을 변환 없이 PipelineStatus로 승격시킬 수 있어야 한다."""
+    assert PipelineStatus("unsupported_concept") is PipelineStatus.UNSUPPORTED_CONCEPT
+    assert PipelineStatus("ambiguous_input") is PipelineStatus.AMBIGUOUS_INPUT

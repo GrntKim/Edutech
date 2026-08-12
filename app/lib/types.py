@@ -131,9 +131,41 @@ class ValidationResult(BaseModel):
 
 
 # 소유: D(REQ-005)
+class PipelineStatus(str, Enum):
+    """파이프라인이 어떤 경로로 끝났는지를 나타내는 구조화된 값.
+
+    warning 문구는 사용자 안내용 자유 문자열이라 호출부가 분기 근거로 쓸 수
+    없다(문구가 바뀌면 조용히 깨진다). 소비자는 이 값으로 판단한다:
+    - main.py 레이트리밋: ambiguous_input만 카운트에서 제외한다(A1이 LLM
+      호출 전에 규칙으로 걸러내는 경로라 API 비용이 0이다).
+    - lesson_requests.validation_status: 이 값을 그대로 저장해 실패 사유를
+      사후에 집계할 수 있게 한다.
+
+    unsupported_concept/ambiguous_input은 ConceptCollectResult.status와 문자열
+    값이 일치한다 — 오케스트레이터가 변환 없이 그대로 승격시킬 수 있도록.
+    """
+
+    SUCCESS = "success"
+    # 재시도를 다 썼지만 위반이 남은 채로 마지막 결과를 반환한 경우.
+    MAX_RETRIES_EXCEEDED = "max_retries_exceeded"
+    # 재시도할 때마다 완전히 다른 위반이 나와(수렴 불가) 중단한 경우.
+    VALIDATION_DIVERGED = "validation_diverged"
+    UNSUPPORTED_CONCEPT = "unsupported_concept"
+    AMBIGUOUS_INPUT = "ambiguous_input"
+    NO_CURRICULUM_MATCH = "no_curriculum_match"
+    # run_pipeline이 잡아낸 에이전트 실패(_AGENT_ERRORS).
+    AGENT_ERROR = "agent_error"
+    # run_pipeline 밖으로 새어나간 예외 — main.py가 직접 기록한다.
+    PIPELINE_ERROR = "pipeline_error"
+
+
+# 소유: D(REQ-005)
 class PipelineResult(BaseModel):
     lesson_plan: dict
     validation: ValidationResult
+    # 기본값을 두지 않는다 — 새 조기 종료 경로를 추가하면서 status를 빠뜨리면
+    # 실패가 조용히 success로 기록되므로, 그럴 바엔 즉시 터지는 편이 낫다.
+    status: PipelineStatus
     warning: str | None = None
 
 

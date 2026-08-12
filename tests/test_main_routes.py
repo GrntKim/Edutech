@@ -19,6 +19,7 @@ from app.lib.types import (
     ConceptInput,
     LessonRequest,
     PipelineResult,
+    PipelineStatus,
     User,
     ValidationResult,
 )
@@ -114,6 +115,7 @@ def test_generate_records_attempt_when_search_returns_nothing(client, monkeypatc
         lambda concept_input: PipelineResult(
             lesson_plan={},
             validation=ValidationResult(passed=False),
+            status=PipelineStatus.NO_CURRICULUM_MATCH,
             warning="해당 학년에서 연결 가능한 교육과정 성취기준을 찾지 못했습니다.",
         ),
     )
@@ -123,17 +125,43 @@ def test_generate_records_attempt_when_search_returns_nothing(client, monkeypatc
     assert response.status_code == 200
     assert len(saved_rows) == 1
     assert saved_rows[0]["lesson_output"] == {}
-    assert saved_rows[0]["validation_status"].startswith("해당 학년에서")
+    assert saved_rows[0]["validation_status"] == "no_curriculum_match"
     assert saved_rows[0]["mapped_curriculum_code"] is None
 
 
-def test_generate_records_attempt_when_concept_unsupported(client, monkeypatch, saved_rows):
+def test_generate_skips_count_when_input_ambiguous(client, monkeypatch, saved_rows):
+    """ambiguous_input은 A1이 LLM 호출 전 규칙으로 걸러낸 경로라 비용이 0이다.
+
+    "인공지능"·빈 값 등 처음 쓰는 교사가 가장 먼저 칠 입력들이 여기 걸리므로,
+    안내만 보고 다시 입력하는 흐름에서 일 한도가 깎이면 안 된다.
+    """
     monkeypatch.setattr(
         main,
         "run_pipeline",
         lambda concept_input: PipelineResult(
             lesson_plan={},
             validation=ValidationResult(passed=False),
+            status=PipelineStatus.AMBIGUOUS_INPUT,
+            warning="입력하신 개념이 너무 넓어 특정할 수 없습니다.",
+        ),
+    )
+
+    response = client.post("/generate", data={"concept": "인공지능", "grade": 5})
+
+    assert response.status_code == 200
+    assert "너무 넓어" in response.text
+    assert saved_rows == []
+
+
+def test_generate_records_attempt_when_concept_unsupported(client, monkeypatch, saved_rows):
+    """unsupported_concept은 A1이 LLM을 1회 호출한 뒤 나오므로 계속 카운트한다."""
+    monkeypatch.setattr(
+        main,
+        "run_pipeline",
+        lambda concept_input: PipelineResult(
+            lesson_plan={},
+            validation=ValidationResult(passed=False),
+            status=PipelineStatus.UNSUPPORTED_CONCEPT,
             warning="입력하신 내용은 AI 개념으로 인식되지 않았습니다.",
         ),
     )
@@ -142,6 +170,7 @@ def test_generate_records_attempt_when_concept_unsupported(client, monkeypatch, 
 
     assert len(saved_rows) == 1
     assert saved_rows[0]["lesson_output"] == {}
+    assert saved_rows[0]["validation_status"] == "unsupported_concept"
 
 
 def test_generate_records_attempt_when_pipeline_raises(client, monkeypatch, saved_rows):
@@ -167,6 +196,7 @@ def test_generate_records_success_once(client, monkeypatch, saved_rows):
         lambda concept_input: PipelineResult(
             lesson_plan=LESSON_PLAN,
             validation=ValidationResult(passed=True),
+            status=PipelineStatus.SUCCESS,
             warning=None,
         ),
     )
@@ -175,7 +205,7 @@ def test_generate_records_success_once(client, monkeypatch, saved_rows):
 
     assert response.status_code == 200
     assert len(saved_rows) == 1
-    assert saved_rows[0]["validation_status"] == "passed"
+    assert saved_rows[0]["validation_status"] == "success"
     assert saved_rows[0]["lesson_output"] == LESSON_PLAN
     # 다운로드 링크는 저장된 행을 가리킨다 — 임시파일 경로(/download/...)가 아니다.
     assert "/redownload" in response.text
@@ -188,7 +218,10 @@ def test_generate_passes_form_values_to_pipeline(client, monkeypatch, saved_rows
     def capture(concept_input: ConceptInput):
         captured["input"] = concept_input
         return PipelineResult(
-            lesson_plan=LESSON_PLAN, validation=ValidationResult(passed=True), warning=None
+            lesson_plan=LESSON_PLAN,
+            validation=ValidationResult(passed=True),
+            status=PipelineStatus.SUCCESS,
+            warning=None,
         )
 
     monkeypatch.setattr(main, "run_pipeline", capture)
@@ -348,7 +381,10 @@ def test_generate_refreshes_banner_out_of_band(client, monkeypatch, saved_rows):
         main,
         "run_pipeline",
         lambda concept_input: PipelineResult(
-            lesson_plan={}, validation=ValidationResult(passed=False), warning="AI 개념이 아닙니다"
+            lesson_plan={},
+            validation=ValidationResult(passed=False),
+            status=PipelineStatus.UNSUPPORTED_CONCEPT,
+            warning="AI 개념이 아닙니다",
         ),
     )
 
@@ -380,7 +416,24 @@ def test_mypage_marks_failed_rows(client, monkeypatch, user):
     body = client.get("/mypage").text
 
     assert "생성 실패" in body
+    # PipelineStatus 도입 전 행은 경고 문구가 그대로 들어 있다 — 원문 유지.
     assert "검색 결과가 없습니다" in body
+
+
+def test_mypage_renders_status_code_as_label(client, monkeypatch, user):
+    """validation_status에 저장된 PipelineStatus 값은 화면에서 한글로 바뀐다."""
+    rows = [
+        _lesson_request(user.id, LESSON_PLAN, validation_status="success"),
+        _lesson_request(user.id, {}, validation_status="no_curriculum_match"),
+    ]
+    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset: rows)
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id: len(rows))
+
+    body = client.get("/mypage").text
+
+    assert "검증 통과" in body
+    assert "연결 가능한 성취기준 없음" in body
+    assert "no_curriculum_match" not in body
 
 
 def test_mypage_detail_hides_download_for_failed_row(client, monkeypatch, user):

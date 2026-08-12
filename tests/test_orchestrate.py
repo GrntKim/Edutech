@@ -23,6 +23,7 @@ from app.lib.types import (
     GradeBand,
     MappingResult,
     PipelineContext,
+    PipelineStatus,
     SearchQuery,
     SearchResult,
     StructuredConcept,
@@ -194,6 +195,7 @@ def test_normal_flow_returns_pipeline_result(monkeypatch):
 
     assert calls == ["A1", "A2", "B", "C", "D"]
     assert result.warning is None
+    assert result.status is PipelineStatus.SUCCESS
     assert result.lesson_plan == {"title": "완성 교안"}
     assert result.validation.passed is True
 
@@ -219,6 +221,7 @@ def test_a1_unsupported_concept_short_circuits(monkeypatch):
 
     assert calls == ["A1"]
     assert result.warning == orchestrate.MSG_UNSUPPORTED_CONCEPT
+    assert result.status is PipelineStatus.UNSUPPORTED_CONCEPT
 
 
 def test_a1_ambiguous_input_short_circuits(monkeypatch):
@@ -236,6 +239,7 @@ def test_a1_ambiguous_input_short_circuits(monkeypatch):
     )
 
     assert result.warning == orchestrate.MSG_AMBIGUOUS_INPUT
+    assert result.status is PipelineStatus.AMBIGUOUS_INPUT
 
 
 def test_a2_empty_results_short_circuits(monkeypatch):
@@ -253,6 +257,7 @@ def test_a2_empty_results_short_circuits(monkeypatch):
     )
 
     assert result.warning == orchestrate.MSG_NO_CURRICULUM_MATCH
+    assert result.status is PipelineStatus.NO_CURRICULUM_MATCH
 
 
 def test_map_concept_receives_context(monkeypatch):
@@ -311,6 +316,7 @@ def test_validation_retries_once_then_passes(monkeypatch):
     assert c_feedbacks[0] is None
     assert c_feedbacks[1] is first_validation  # 변환 없이 그대로 재전달
     assert result.warning is None
+    assert result.status is PipelineStatus.SUCCESS
     assert result.validation.passed is True
 
 
@@ -342,6 +348,7 @@ def test_validation_exhausts_retries(monkeypatch):
     assert call_count["c"] == orchestrate.MAX_RETRIES + 1
     assert call_count["d"] == orchestrate.MAX_RETRIES + 1
     assert result.warning == orchestrate.MSG_MAX_RETRIES_EXCEEDED
+    assert result.status is PipelineStatus.MAX_RETRIES_EXCEEDED
     assert result.lesson_plan == {"attempt": orchestrate.MAX_RETRIES + 1}
 
 
@@ -378,6 +385,7 @@ def test_validation_diverges_stops_before_max_retries(monkeypatch):
     assert call_count["c"] == 2  # MAX_RETRIES + 1(=4)까지 가지 않음
     assert call_count["d"] == 2
     assert result.warning == orchestrate.MSG_VALIDATION_DIVERGED
+    assert result.status is PipelineStatus.VALIDATION_DIVERGED
     assert result.validation.violations == ["모서리"]
 
 
@@ -412,6 +420,7 @@ def test_validation_partial_overlap_continues(monkeypatch):
 
     assert call_count["c"] == 3  # 중단 없이 세 번째(통과)까지 진행
     assert result.warning is None
+    assert result.status is PipelineStatus.SUCCESS
     assert result.validation.passed is True
 
 
@@ -445,6 +454,7 @@ def test_first_validation_failure_alone_does_not_trigger_divergence(monkeypatch)
 
     assert call_count["c"] == 2
     assert result.warning is None
+    assert result.status is PipelineStatus.SUCCESS
     assert result.validation.passed is True
 
 
@@ -527,6 +537,7 @@ def test_gemini_error_during_retry_falls_back_to_last_success(monkeypatch):
     assert call_count["c"] == 2
     assert result.lesson_plan == {"attempt": 1}
     assert result.warning == orchestrate.MSG_AGENT_FAILURE
+    assert result.status is PipelineStatus.AGENT_ERROR
 
 
 def test_curriculum_search_error_does_not_escape_pipeline(monkeypatch):
@@ -549,6 +560,7 @@ def test_curriculum_search_error_does_not_escape_pipeline(monkeypatch):
     )
 
     assert result.warning == orchestrate.MSG_AGENT_FAILURE
+    assert result.status is PipelineStatus.AGENT_ERROR
     assert result.lesson_plan == {}
 
 
@@ -571,6 +583,7 @@ def test_mapping_error_does_not_escape_pipeline(monkeypatch):
     )
 
     assert result.warning == orchestrate.MSG_AGENT_FAILURE
+    assert result.status is PipelineStatus.AGENT_ERROR
     assert result.lesson_plan == {}
 
 

@@ -19,14 +19,14 @@
     <main>
         <p><a href="/mypage">&larr; 목록으로</a></p>
         <h1>{{ item.concept_name }} ({{ item.target_grade }}학년)</h1>
-        <p>검증 상태: {{ item.validation_status }}</p>
+        <p>검증 상태: {{ item.validation_status | status_label }}</p>
         <p>생성 시각: {{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
 
         {# lesson_output이 비면 생성에 실패한 기록이라 내려받을 교안이 없다. #}
         {% if item.lesson_output %}
         <a href="/mypage/requests/{{ item.id }}/redownload" class="download-btn">DOCX 재출력</a>
         {% else %}
-        <p class="notice">생성에 실패한 요청입니다: {{ item.validation_status }}</p>
+        <p class="notice">생성에 실패한 요청입니다: {{ item.validation_status | status_label }}</p>
         {% endif %}
         <form method="post" action="/mypage/requests/{{ item.id }}/delete" style="display:inline"
               onsubmit="return confirm('이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.');">
