@@ -1,14 +1,19 @@
-"""a1_queries_v2.csv 전체를 원본 정의와 비교한다. 비결정성 해소로 1회 측정."""
+"""a1_queries_v2.csv 전체를 원본 정의와 비교한다. 주의: A2 검색은 결정론적이나 A1 쿼리 생성은 실행마다 달라진다.
+이 CSV는 1회 생성 표본이므로 승패 결과를 성능 근거로 쓰지 말 것."""
 import csv, asyncio
 from app.lib.types import SearchQuery
 from app.agents.curriculum_search.logic import hybrid_search
 
-CSV_PATH = "app/agents/concept_collect/a1_queries_v2.csv"
+CSV_PATH = "app/data/a1_queries_v2.csv"
 MISS = 99
+
+def _norm(code):
+    return code.strip().strip("[]").replace(" ", "")
+
 
 def rank_of(results, answer):
     for r in results:
-        if answer in str(r.chunk.achievement_code):
+        if _norm(answer) == _norm(str(r.chunk.achievement_code)):
             return r.rank
     return MISS
 
@@ -38,4 +43,8 @@ async def main():
         print(l)
     print(f"\nA1 우세 {win} / 원본 우세 {lose} / 동률 {tie}")
 
-asyncio.run(main())
+
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

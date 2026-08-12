@@ -2,7 +2,7 @@ import sys, csv, asyncio
 from app.lib.types import SearchQuery
 from app.agents.curriculum_search.logic import hybrid_search
 
-CSV_PATH = "app/agents/concept_collect/a1_queries.csv"
+CSV_PATH = "app/data/a1_queries.csv"
 
 async def main():
     name, grade = sys.argv[1], sys.argv[2]
