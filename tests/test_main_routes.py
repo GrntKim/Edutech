@@ -80,6 +80,7 @@ def user():
 def client(user):
     """로그인 의존성만 우회한다 — 라우트 본문의 DB 호출은 각 테스트가 개별 monkeypatch."""
     main.app.dependency_overrides[auth.get_current_user] = lambda: user
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: user
     with TestClient(main.app, raise_server_exceptions=False) as test_client:
         yield test_client
     main.app.dependency_overrides.clear()
@@ -300,6 +301,69 @@ def test_redownload_404_when_missing(client, monkeypatch, fake_docx):
 def test_download_route_is_gone(client):
     """임시파일 서빙 라우트는 제거됐다(인스턴스 로컬 디스크 의존 제거)."""
     assert client.get("/download/" + "0" * 32 + ".docx").status_code == 404
+
+
+# ---------- 남은 횟수 배너 ----------
+
+
+def test_index_shows_remaining_counts(client, monkeypatch):
+    monkeypatch.setattr(
+        db, "count_lesson_requests_since", lambda user_id, window: 2 if window.days == 1 else 4
+    )
+
+    body = " ".join(client.get("/").text.split())
+
+    # 일 5회 중 2회 사용 → 3회 남음, 주 15회 중 4회 사용 → 11회 남음
+    assert "오늘 <strong>3</strong>/5회" in body
+    assert "이번 주 <strong>11</strong>/15회" in body
+
+
+def test_index_shows_unlimited_for_admin(client, monkeypatch):
+    admin = _user(role="admin")
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: admin
+
+    body = client.get("/").text
+
+    assert "무제한" in body
+
+
+def test_index_skips_rate_lookup_when_anonymous(client, monkeypatch):
+    """비로그인은 폼이 없으므로 배너도, 한도 조회 DB 왕복도 없어야 한다."""
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: None
+    monkeypatch.setattr(
+        db,
+        "count_lesson_requests_since",
+        lambda user_id, window: pytest.fail("비로그인인데 한도를 조회함"),
+    )
+
+    body = client.get("/").text
+
+    assert 'id="rate-limit"' not in body
+    assert "로그인</a>이 필요합니다" in body
+
+
+def test_generate_refreshes_banner_out_of_band(client, monkeypatch, saved_rows):
+    """htmx는 #result만 갈아끼우므로, 폼 옆 배너는 OOB swap으로만 갱신된다."""
+    monkeypatch.setattr(
+        main,
+        "run_pipeline",
+        lambda concept_input: PipelineResult(
+            lesson_plan={}, validation=ValidationResult(passed=False), warning="AI 개념이 아닙니다"
+        ),
+    )
+
+    body = client.post("/generate", data={"concept": "김치찌개", "grade": 5}).text
+
+    assert 'id="rate-limit"' in body
+    assert 'hx-swap-oob="true"' in body
+
+
+def test_mypage_detail_has_no_rate_banner(client, monkeypatch, user):
+    """result.html을 include하는 상세 페이지에는 rate_status가 없어 배너가 안 뜬다."""
+    item = _lesson_request(user.id, LESSON_PLAN)
+    monkeypatch.setattr(db, "get_lesson_request_by_id", lambda request_id: item)
+
+    assert 'id="rate-limit"' not in client.get(f"/mypage/requests/{item.id}").text
 
 
 # ---------- 마이페이지: 실패 행 표시 ----------

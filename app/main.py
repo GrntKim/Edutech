@@ -34,7 +34,11 @@ MYPAGE_PAGE_SIZE = 10
 
 @app.get("/", response_class=HTMLResponse)
 def read_root(request: Request, user: User | None = Depends(auth.get_optional_user)):
-    return templates.TemplateResponse(request, "index.html", {"user": user})
+    # 비로그인은 폼 자체가 없으므로 한도도 조회하지 않는다(불필요한 DB 왕복 회피).
+    rate_status = auth.check_rate_limit(user) if user is not None else None
+    return templates.TemplateResponse(
+        request, "index.html", {"user": user, "rate_status": rate_status}
+    )
 
 
 def _record_attempt(
@@ -150,10 +154,13 @@ def generate(
         request,
         "result.html",
         {
+            "user": user,
             "lesson": result.lesson_plan,
             "warning": result.warning,
             # 저장에 실패했으면 다운로드할 근거(lesson_requests 행)가 없으므로 버튼을 숨긴다.
             "request_id": saved.id if saved is not None and saved.lesson_output else None,
+            # 방금 기록한 행까지 반영된 값이어야 하므로 위 rate_status를 재사용하지 않고 다시 센다.
+            "rate_status": auth.check_rate_limit(user),
         },
     )
 

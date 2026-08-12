@@ -1,3 +1,6 @@
+{# 실패해도 파이프라인 실행은 카운트되므로, 조각을 돌려줄 때마다 배너를 OOB로 갱신한다. #}
+{% with rate_oob = True %}{% include "_rate_limit.html" %}{% endwith %}
+
 {% if warning %}
 <div class="notice">{{ warning }}</div>
 {% endif %}
