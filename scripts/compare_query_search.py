@@ -4,9 +4,13 @@ from app.agents.curriculum_search.logic import hybrid_search
 
 CSV_PATH = "app/data/a1_queries.csv"
 
+def _norm(code):
+    return code.strip().strip("[]").replace(" ", "")
+
+
 def find_rank(results, answer):
     for r in results:
-        if answer in str(r.chunk.achievement_code):
+        if _norm(answer) == _norm(str(r.chunk.achievement_code)):
             return r.rank, r.similarity_score
     return None, None
 
@@ -31,4 +35,6 @@ async def main():
     for row in picked:
         await run(row)
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())

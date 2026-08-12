@@ -9,9 +9,13 @@ SAMPLE = [("분류","4"),("분류","3"),("패턴 인식","2"),("패턴 인식","
           ("특징 추출","3"),("예측","5"),("데이터 수집","4"),
           ("의사결정트리","4"),("데이터 시각화","4"),("확률","6")]
 
+def _norm(code):
+    return code.strip().strip("[]").replace(" ", "")
+
+
 def rank_of(results, answer):
     for r in results:
-        if answer in str(r.chunk.achievement_code):
+        if _norm(answer) == _norm(str(r.chunk.achievement_code)):
             return r.rank
     return MISS
 
@@ -44,4 +48,6 @@ async def main():
         print(f"{n:<16}{g}학년  원본 {o:5.1f}  A1 {w:5.1f}  {mark}")
     print(f"\nA1 우세 {win} / 원본 우세 {lose} / 동률 {len(out)-win-lose}")
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
