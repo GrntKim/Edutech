@@ -100,6 +100,38 @@ reflection_questions/table).
 `evaluation_criteria.*`(교사용 평가 루브릭 — notes와 같은 성격의 교사 전용
 참고자료로 취급).
 
+## 학년별 AI 원리 개수 검증 (금지어 매칭과 별개)
+
+위 ①~⑥은 모두 "금지어가 텍스트에 있는지"를 보는 검사다. 이와 성격이 다른
+검사가 하나 더 있어 별도로 서술한다 — C가 채우는 `ai_principles` 배열의
+**길이**를 학년별 기준값과 비교한다(REQ-005).
+
+C 프롬프트 규칙 8이 "학년이 올라갈수록 다루는 원리 요소 수를 늘린다
+(4학년 1개 / 5학년 2개 / 6학년 3개)"고 지시하고, 규칙 9가 그 원리들을
+`ai_principles` 배열로 다시 나열하게 한다. 지시만 있고 검증 수단이 없어
+실행마다 결과가 갈렸다(2026-08-11 실측: 예측·분류·패턴 인식 6학년은 3개,
+군집화 6학년은 2개). 배열 길이 비교는 LLM 판정 없이 결정론적으로 되므로
+D에서 잡는다.
+
+- 기준값은 `_PRINCIPLE_COUNT_BY_GRADE` 상수다. 관리자 화면에서 조정 가능하게
+  하는 방안도 검토했으나 이번 범위에서 그 요구가 확인되지 않아 하드코딩한다.
+  1~3학년은 잠정 1개다 — C 프롬프트가 4~6학년만 명시하고 있어 가장 낮은
+  단계에 맞췄다.
+- **정확히 일치**를 요구한다(초과도 위반). 상한만 보면 "4학년 교안에 원리
+  3개"를 놓치는데, 그건 이 검사가 지키려는 학년별 난이도 차등이 정확히
+  무너진 경우다. 정확 일치는 재시도를 늘릴 수 있지만 재시도 상한은
+  오케스트레이터의 MAX_RETRIES로 이미 막혀 있다.
+- `ai_principles`가 `None`이거나 빈 배열이면 **검증을 건너뛴다.** C가 못
+  채울 수 있고 기존 히스토리 데이터에는 이 필드가 아예 없다. 이 필드 하나
+  때문에 재시도 루프가 도는 상황을 만들지 않는다.
+
+위반은 기존 금지어 위반과 같은 경로를 탄다(`ValidationResult.violations`에
+담기고 `retry_feedback`으로 C에 전달). 다만 violations 원소가 "검출된
+금지어"인 기존 계약과 성격이 달라(개수 서술) `PRINCIPLE_COUNT_VIOLATION_PREFIX`
+접두사로 구분한다 — 타입을 나누려면 공용 `app/lib/types.py`를 고쳐야 하고,
+오케스트레이터의 수렴 불가 판정도 이 접두사로 개수 위반을 걸러낸다
+(`orchestrate.py`의 `_forbidden_term_violations` 참고).
+
 ## 알려진 한계
 
 2026-08-06 실측에서 A1의 `caution_terms`가 영어 원어("K-Means",
@@ -121,6 +153,7 @@ import logging
 import re
 import time
 from functools import lru_cache
+from typing import NamedTuple
 
 from app.lib.types import GradeBand, PipelineContext, Subject, ValidationResult, grade_to_bands
 
@@ -244,6 +277,70 @@ _CURATED_FORBIDDEN: dict[GradeBand, frozenset[str]] = {
         "프로그래밍", "블록기반", "스마트팜", "산성화", "지속가능성", "의식주",
     }),
 }
+
+
+# 학년별로 교안이 다뤄야 하는 AI 원리 개수(모듈 docstring "학년별 AI 원리 개수
+# 검증" 절 참고). 4~6학년은 C 프롬프트 규칙 8과 같은 값이고, 1~3학년은 C
+# 프롬프트에 명시가 없어 가장 낮은 단계인 1개로 잠정 고정한다.
+_PRINCIPLE_COUNT_BY_GRADE: dict[int, int] = {1: 1, 2: 1, 3: 1, 4: 1, 5: 2, 6: 3}
+
+# 개수 위반을 `ValidationResult.violations`에 담을 때 붙이는 접두사. violations의
+# 나머지 원소는 "검출된 금지어" 문자열이라 성격이 다르고, 오케스트레이터가
+# 수렴 불가 판정에서 개수 위반을 제외하는 데도 이 접두사를 쓴다.
+PRINCIPLE_COUNT_VIOLATION_PREFIX = "AI 원리 개수"
+
+
+def expected_principle_count(target_grade: int) -> int | None:
+    """해당 학년이 다뤄야 하는 AI 원리 개수. 기준값이 없는 학년이면 None.
+
+    검증 본체(`_check_principle_count`)와 진단 스크립트(scripts/try_pipeline.py)가
+    같은 기준을 보도록 공개한다 — 스크립트가 기준값을 따로 들고 있으면 두 곳이
+    조용히 어긋난다.
+    """
+    return _PRINCIPLE_COUNT_BY_GRADE.get(target_grade)
+
+
+class _PrincipleCountIssue(NamedTuple):
+    """원리 개수 위반 1건.
+
+    violations에 넣을 라벨과 C에게 줄 지시문을 함께 들고 다닌다 — 라벨은
+    사후 집계·수렴 판정용이라 짧아야 하고, 지시문은 C가 무엇을 고쳐야 하는지
+    알 수 있을 만큼 구체적이어야 해서 문구가 서로 다르다.
+    """
+
+    label: str
+    feedback: str
+
+
+def _check_principle_count(lesson_plan: dict, target_grade: int) -> _PrincipleCountIssue | None:
+    """`ai_principles` 배열 길이가 학년 기준값과 정확히 같은지 본다. 맞으면 None.
+
+    `ai_principles`가 없거나 비어 있으면 검증을 건너뛴다(모듈 docstring 참고).
+    기준값이 없는 학년(_PRINCIPLE_COUNT_BY_GRADE 밖)도 마찬가지로 건너뛴다.
+    """
+    principles = lesson_plan.get("ai_principles")
+    if not principles:
+        return None
+
+    expected = expected_principle_count(target_grade)
+    if expected is None:
+        return None
+
+    actual = len(principles)
+    if actual == expected:
+        return None
+
+    return _PrincipleCountIssue(
+        label=f"{PRINCIPLE_COUNT_VIOLATION_PREFIX}: {expected}개 필요, {actual}개 생성",
+        feedback=(
+            # 미달·초과 양쪽에 쓰이는 문구다("{actual}개만 있습니다"처럼 미달을
+            # 전제한 표현을 쓰면 초과일 때 지시가 어긋난다).
+            f"대상 학년({target_grade}학년) 교안은 AI 원리를 {expected}개 다뤄야 하는데 "
+            f"지금은 {actual}개입니다. 활동2와 학습 목표에서 다루는 원리 개수를 "
+            f"{expected}개로 맞추고, ai_principles 배열도 그 원리들을 난이도 오름차순으로 "
+            f"{expected}개 나열해 주세요."
+        ),
+    )
 
 
 def _is_predicate_form(term: str) -> bool:
@@ -467,19 +564,31 @@ def _collect_student_facing_texts(lesson_plan: dict) -> list[str]:
     return texts
 
 
-def _build_retry_feedback(violations: list[str]) -> str:
-    """C의 재생성 프롬프트에 그대로 들어갈 지시문 형태의 피드백을 만든다."""
-    if not violations:
-        return ""
-    bullet_lines = "\n".join(
-        f"- '{term}': 대상 학년 학생에게 아직 낯선 용어입니다." for term in violations
-    )
-    return (
-        "다음 용어들은 대상 학년 학생이 아직 배우지 않았거나 그대로 노출하면 "
-        "안 되는 전문 용어입니다. 같은 의미를 쉬운 표현이나 비유로 바꿔서 "
-        "다시 작성해 주세요:\n"
-        f"{bullet_lines}"
-    )
+def _build_retry_feedback(
+    term_violations: list[str], principle_issue: _PrincipleCountIssue | None
+) -> str:
+    """C의 재생성 프롬프트에 그대로 들어갈 지시문 형태의 피드백을 만든다.
+
+    두 종류의 위반은 고쳐야 할 것이 서로 달라(용어 순화 vs 원리 개수 조정)
+    문단을 나눠서 담는다. 둘 다 없으면 빈 문자열이다.
+    """
+    sections: list[str] = []
+
+    if term_violations:
+        bullet_lines = "\n".join(
+            f"- '{term}': 대상 학년 학생에게 아직 낯선 용어입니다." for term in term_violations
+        )
+        sections.append(
+            "다음 용어들은 대상 학년 학생이 아직 배우지 않았거나 그대로 노출하면 "
+            "안 되는 전문 용어입니다. 같은 의미를 쉬운 표현이나 비유로 바꿔서 "
+            "다시 작성해 주세요:\n"
+            f"{bullet_lines}"
+        )
+
+    if principle_issue is not None:
+        sections.append(principle_issue.feedback)
+
+    return "\n\n".join(sections)
 
 
 def validate(
@@ -505,17 +614,25 @@ def validate(
         context.target_grade, subject, caution_terms, concept_name
     )
     texts = _collect_student_facing_texts(lesson_plan)
-    violations = _find_violations(texts, forbidden_terms)
+    term_violations = _find_violations(texts, forbidden_terms)
+
+    # 금지어 매칭과 독립적으로 판정한다 — 두 위반이 동시에 나면 둘 다 리포트한다.
+    principle_issue = _check_principle_count(lesson_plan, context.target_grade)
+
+    violations = list(term_violations)
+    if principle_issue is not None:
+        violations.append(principle_issue.label)
 
     elapsed_ms = (time.monotonic() - start) * 1000
     logger.info(
         f"validate_end grade={context.target_grade} subject={subject.value} "
         f"forbidden_term_count={len(forbidden_terms)} violation_count={len(violations)} "
+        f"principle_count_violation={principle_issue is not None} "
         f"elapsed_ms={elapsed_ms:.1f}"
     )
 
     return ValidationResult(
         passed=len(violations) == 0,
         violations=violations,
-        retry_feedback=_build_retry_feedback(violations),
+        retry_feedback=_build_retry_feedback(term_violations, principle_issue),
     )

@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.agents import orchestrate  # noqa: E402
+from app.agents.validate.logic import expected_principle_count  # noqa: E402
 from app.lib.types import ConceptInput, PipelineContext  # noqa: E402
 
 
@@ -45,6 +46,44 @@ def _total(start: float) -> str:
     """조기 종료·정상 종료 모두 같은 형식으로 찍는다.
     결과 파일에서 grep으로 뽑아 비교할 때 형식이 갈리면 걸린다."""
     return f"\n=== 총 소요 {_ms(start)} (목표: 60초) ==="
+
+
+def _format_principles(lesson_plan: dict, target_grade: int) -> str:
+    """C의 `ai_principles`를 `  ai_principles: ` 한 줄로 요약한다.
+
+    `--no-json`으로 여러 조합을 일괄 실행한 뒤 이 줄만 grep해 비교하는 게 주
+    용도라, 교안 JSON 덤프와 무관하게 항상 찍는다. 배열 길이만 찍으면 학년별
+    기준값(4학년 1개/5학년 2개/6학년 3개)을 외우고 있어야 판단이 되므로 기준과
+    실제를 나란히 놓고 판정("일치"/"미달"/"초과")까지 붙인다. 기준값은
+    validate/logic.py의 것을 그대로 참조한다 — 여기에 따로 적으면 어긋난다.
+
+    None(C가 필드를 못 채움)과 빈 배열은 구분해서 찍는다. 둘 다 D의 개수
+    검증이 건너뛰어지는 경우인데 원인이 달라 구분이 필요하다.
+
+    재시도 회차마다 찍는다. 개수 위반으로 재시도가 돌면 회차별로 개수가
+    어떻게 움직였는지가 이 스크립트로 확인하려는 것 자체이고, 재시도는
+    MAX_RETRIES로 막혀 있어 줄 수가 몇 줄 늘지 않는다.
+    """
+    prefix = "  ai_principles:"
+    expected = expected_principle_count(target_grade)
+    expected_text = f"기준 {expected}개" if expected is not None else "기준 없음"
+
+    principles = lesson_plan.get("ai_principles")
+    if principles is None:
+        return f"{prefix} 없음(None) / {expected_text} — 개수 검증 건너뜀"
+    if not principles:
+        return f"{prefix} 0개(빈 배열) / {expected_text} — 개수 검증 건너뜀"
+
+    actual = len(principles)
+    if expected is None:
+        verdict = "판정 없음"
+    elif actual == expected:
+        verdict = "일치"
+    else:
+        verdict = "미달" if actual < expected else "초과"
+
+    # 내용까지 봐야 학년이 올라갈수록 난이도 계단이 서는지 확인할 수 있다.
+    return f"{prefix} {actual}개 / {expected_text} ({verdict}) {principles}"
 
 
 def _parse_args() -> tuple[str, int, bool]:
@@ -146,7 +185,9 @@ def main() -> None:
 
     while True:
         t = time.monotonic()
-        lesson_plan = orchestrate.generate_lesson(mapping, context, retry_feedback)
+        lesson_plan = orchestrate.generate_lesson(
+            mapping, context, retry_feedback, caution_terms=concept.caution_terms
+        )
         print(f"\n[C 교안 생성] retry={retry_count} ({_ms(t)})")
 
         t = time.monotonic()
@@ -158,6 +199,7 @@ def main() -> None:
             concept_name=concept.concept_name,
         )
         print(f"[D 검증] passed={validation.passed} ({_ms(t)})")
+        print(_format_principles(lesson_plan, target_grade))
         if not validation.passed:
             print(f"  violations: {validation.violations}")
 
@@ -166,8 +208,11 @@ def main() -> None:
 
         # 재시도 위반이 이전과 완전히 다르면 C가 해결할 수 있는 문제가 아니다
         # (ORCH-002 수렴 불가 조기 종료). 이 조건이 빠지면 실제 파이프라인보다
-        # 시도 횟수가 많아져 소요 시간이 실제와 어긋난다.
-        if previous_violations and set(validation.violations).isdisjoint(previous_violations):
+        # 시도 횟수가 많아져 소요 시간이 실제와 어긋난다. run_pipeline()과 똑같이
+        # 원리 개수 위반은 비교에서 제외한다.
+        current_terms = orchestrate._forbidden_term_violations(validation.violations)
+        previous_terms = orchestrate._forbidden_term_violations(previous_violations)
+        if previous_terms and current_terms and current_terms.isdisjoint(previous_terms):
             stop_reason = "수렴 불가로 재시도 중단"
             print(f"  -> {stop_reason}")
             break
