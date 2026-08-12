@@ -2,7 +2,7 @@ import csv, asyncio, statistics
 from app.lib.types import SearchQuery
 from app.agents.curriculum_search.logic import hybrid_search
 
-CSV_PATH = "app/agents/concept_collect/a1_queries.csv"
+CSV_PATH = "app/data/a1_queries.csv"
 REPEAT = 3
 MISS = 99
 SAMPLE = [("분류","4"),("분류","3"),("패턴 인식","2"),("패턴 인식","4"),

@@ -2,7 +2,7 @@ import sys, csv, asyncio, time
 from app.lib.types import SearchQuery
 from app.agents.curriculum_search.logic import hybrid_search
 
-CSV_PATH = "app/agents/concept_collect/a1_queries.csv"
+CSV_PATH = "app/data/a1_queries.csv"
 
 def find_rank(results, answer):
     for r in results:

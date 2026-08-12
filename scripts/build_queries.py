@@ -14,7 +14,7 @@ from app.lib.types import ConceptInput, PipelineContext
 from app.agents.concept_collect.logic import analyze_concept
 
 SOURCE = "curriculum-search-engine/RS-005_골든셋.csv"
-OUTPUT = "app/agents/concept_collect/a1_queries.csv"
+OUTPUT = "app/data/a1_queries.csv"
 FIELDS = [
     "ai_개념", "target_grade", "chunk_id", "개념_정의_초안",
     "a1_쿼리", "status", "is_ai_concept", "소요시간", "글자수",
