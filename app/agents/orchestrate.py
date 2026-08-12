@@ -28,6 +28,7 @@ from app.lib.types import (
     MappingResult,
     PipelineContext,
     PipelineResult,
+    PipelineStatus,
     ValidationResult,
 )
 
@@ -95,6 +96,10 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
     최대 MAX_RETRIES회까지 재호출하며, 초과해도 마지막 결과는 반드시 반환한다.
     에이전트 호출 실패(GeminiError/DatabaseError)는 사용자를 무응답으로 두지
     않도록 안내 문구가 담긴 PipelineResult로 변환해 반환한다.
+
+    모든 반환 지점은 warning 문구와 함께 PipelineStatus를 채운다 — 문구는
+    사용자 안내용이고, 호출부(main.py의 레이트리밋 판정·기록)는 status로만
+    분기한다.
     """
     pipeline_start = time.monotonic()
 
@@ -116,9 +121,12 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
         )
 
         if concept_result.status != "success":
+            # PipelineStatus의 문자열 값이 A1의 status와 일치하도록 정의돼 있어
+            # 변환 없이 그대로 승격시킨다(문구 분기와 이중 관리하지 않는다).
+            status = PipelineStatus(concept_result.status)
             message = (
                 MSG_UNSUPPORTED_CONCEPT
-                if concept_result.status == "unsupported_concept"
+                if status is PipelineStatus.UNSUPPORTED_CONCEPT
                 else MSG_AMBIGUOUS_INPUT
             )
             logger.info(
@@ -128,6 +136,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
             return PipelineResult(
                 lesson_plan={},
                 validation=ValidationResult(passed=False),
+                status=status,
                 warning=message,
             )
 
@@ -148,6 +157,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
             return PipelineResult(
                 lesson_plan={},
                 validation=ValidationResult(passed=False),
+                status=PipelineStatus.NO_CURRICULUM_MATCH,
                 warning=MSG_NO_CURRICULUM_MATCH,
             )
 
@@ -198,6 +208,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
                     return PipelineResult(
                         lesson_plan=lesson_plan,
                         validation=validation,
+                        status=PipelineStatus.AGENT_ERROR,
                         warning=MSG_AGENT_FAILURE,
                     )
                 raise
@@ -219,6 +230,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
                 return PipelineResult(
                     lesson_plan=lesson_plan,
                     validation=validation,
+                    status=PipelineStatus.VALIDATION_DIVERGED,
                     warning=MSG_VALIDATION_DIVERGED,
                 )
 
@@ -230,6 +242,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
                 return PipelineResult(
                     lesson_plan=lesson_plan,
                     validation=validation,
+                    status=PipelineStatus.MAX_RETRIES_EXCEEDED,
                     warning=MSG_MAX_RETRIES_EXCEEDED,
                 )
 
@@ -238,7 +251,12 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
             retry_count += 1
 
         logger.info(f"pipeline_end elapsed_ms={_elapsed_ms(pipeline_start):.1f}")
-        return PipelineResult(lesson_plan=lesson_plan, validation=validation, warning=None)
+        return PipelineResult(
+            lesson_plan=lesson_plan,
+            validation=validation,
+            status=PipelineStatus.SUCCESS,
+            warning=None,
+        )
 
     except _AGENT_ERRORS:
         logger.exception(
@@ -247,5 +265,6 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
         return PipelineResult(
             lesson_plan={},
             validation=ValidationResult(passed=False),
+            status=PipelineStatus.AGENT_ERROR,
             warning=MSG_AGENT_FAILURE,
         )
