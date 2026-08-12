@@ -33,7 +33,12 @@ LLM 기반)는 이 모듈 범위 밖이며 `prompts.py`에 골격만 있다.
 
     forbidden(target_grade) = union(
         _CURATED_FORBIDDEN[band] for band not in grade_to_bands(target_grade)
-    )
+    ) | _ALWAYS_FORBIDDEN
+
+`_ALWAYS_FORBIDDEN`("레이블","라벨")은 학년군 차집합과 무관하게 항상 합쳐진다
+— 교육과정에 아예 등장하지 않는 용어라 "누적 범위에 들어왔다"는 개념이
+성립하지 않기 때문이다. 따라서 6학년처럼 학년군 차집합이 비는 경우에도
+금지어가 0개가 되지는 않는다(`test_grade6_has_no_band_derived_terms` 참고).
 
 예를 들어 4학년은 `grade_to_bands(4) == {G1_2, G3_4}`이므로 G5_6 목록만
 금지어가 되고, 2학년은 G3_4·G5_6 목록이 모두 금지어가 된다. G1_2는
@@ -64,10 +69,11 @@ REQ-005 예외 처리 원칙("과도한 차단 방지")에 따라 **오탐(과�
    그 접두 파생어는 후보에서 뺀다. 2026-08-12 실측(#50)에서 "분류" 질의에
    `분류기`가, "패턴 인식" 질의에 `패턴 인식`이 `caution_terms`로 생성돼
    교안이 상시 반려됐다 — 가르치려는 개념 이름을 쓰지 않고 그 개념을
-   설명하는 것은 불가능하므로 C가 무엇을 만들든 위반이 된다. 이 필터만은
-   ②뿐 아니라 `_ALWAYS_FORBIDDEN`(전 밴드 고정 금지어)에도 적용한다 —
-   "레이블"처럼 교사가 개념명으로 그대로 입력할 수 있는 단어가 있어 같은
-   교착이 재발할 수 있기 때문이다(`_build_forbidden_term_pool` 참고).
+   설명하는 것은 불가능하므로 C가 무엇을 만들든 위반이 된다. 판정은 방향을
+   가리지 않는다 — 개념명이 더 긴 경우("레이블링" 수업의 "레이블")도 같은
+   교착이므로 함께 뺀다. 이 필터만은 ②뿐 아니라 `_ALWAYS_FORBIDDEN`(전 밴드
+   고정 금지어)에도 적용한다 — "레이블"처럼 교사가 개념명으로 그대로 입력할
+   수 있는 단어가 있기 때문이다(`_build_forbidden_term_pool` 참고).
 
 매칭 자체("금지어가 텍스트 어디에 있는지 찾는 것")은 ①② 공통이며 이전과
 동일하다:
@@ -139,11 +145,12 @@ _HANGUL_RANGE = "가-힣"
 
 _MIN_TERM_LENGTH = 3  # 1~2음절 단독 금지어 제외(② caution_terms 전용)
 
-# 자기참조 판정(② 전용, #50). 개념명 뒤에 이 길이 이하가 덧붙은 항목까지만
-# 파생어로 보고 제외한다 — "분류"→"분류기"(+1)는 빼되 "분류 알고리즘"(+4)은
-# 남긴다. 넓게 잡으면 진짜 금지해야 할 전문 용어가 통째로 새어 나가므로
-# 보수적으로 시작한다.
-_MAX_SELF_REFERENCE_SUFFIX = 2
+# 자기참조 판정(#50). 짧은 쪽 뒤에 이 길이 이하가 덧붙은 관계까지만 같은 말로
+# 보고 제외한다 — "분류"→"분류기"(+1)는 빼되 "분류 모델"/"분류모델"(+2)은
+# 남긴다. 한국어 파생 접미사는 대부분 1음절("-기","-법","-자")이라 1이면
+# 충분하고, 2로 두면 공백 없이 붙여 쓴 복합어("분류모델")가 새어 나간다
+# (공백을 지운 뒤에는 복합어와 파생어를 어절로 구분할 수 없기 때문이다).
+_MAX_SELF_REFERENCE_SUFFIX = 1
 
 # 개념명이 이보다 짧으면 자기참조 필터를 아예 적용하지 않는다. 1음절
 # 개념명으로 접두 매칭을 하면 무관한 용어까지 대량으로 빠져나간다.
@@ -258,28 +265,37 @@ def _is_self_reference(term: str, concept_name: str) -> bool:
     caution_terms로 내보내 교안이 상시 반려됐다. 개념명을 쓰지 않고 그 개념을
     가르치는 것은 불가능하므로 금지어로 성립하지 않는다.
 
-    매칭은 (1) 공백 정규화 후 완전 일치, (2) 개념명을 접두로 하고 뒤에
-    `_MAX_SELF_REFERENCE_SUFFIX` 이하가 붙은 파생어 두 가지로만 좁힌다.
+    공백을 지워 정규화한 뒤, 완전 일치이거나 **한쪽이 다른 쪽의 접두이면서
+    길이 차이가 `_MAX_SELF_REFERENCE_SUFFIX` 이하**면 같은 말로 본다. 방향을
+    가리지 않는 이유는 양쪽 모두 같은 교착을 만들기 때문이다.
 
-    파생어 판정에는 어절 수 조건을 함께 건다 — 항목의 어절 수가 개념명보다
-    많으면 제외하지 않는다. 길이 차이만 보면 "분류 모델"(정규화 후 길이차 2)이
-    "분류기"와 구분되지 않아, 뒷단어가 짧은 복합어가 통째로 새어 나간다.
-    "분류 모델"·"분류 알고리즘"은 개념명으로 시작하더라도 독립된 전문 용어이므로
-    계속 금지어로 남는다. 반대로 "패턴 인식" → "패턴 인식기"처럼 어절 수가
-    같은 파생어는 제외된다.
+    - 항목이 더 긴 경우: 개념명 "분류" → 항목 "분류기"
+    - 개념명이 더 긴 경우: 개념명 "레이블링" → 항목 "레이블". 이쪽을 빼먹으면
+      "레이블링"을 가르치는 교안이 "레이블"이라는 말을 못 써서 영원히 반려된다.
+
+    길이 차이 1이라는 예산이 좁게 잡는 장치다. "분류 모델"·"분류모델"(+2)이나
+    "분류 알고리즘"(+4)은 개념명으로 시작하더라도 독립된 전문 용어이므로 계속
+    금지어로 남고, "패턴 인식" → "패턴 인식기"(+1)처럼 접미사 하나만 붙은
+    파생어는 제외된다. 어절 수로 복합어를 가려내는 방법은 쓰지 않는다 —
+    정규화가 공백을 지우므로 "분류 모델"과 "분류모델"이 서로 다르게 판정되어
+    표기 차이만으로 결과가 갈린다.
     """
     normalized_concept = _normalize_term(concept_name)
     if len(normalized_concept) < _MIN_CONCEPT_LENGTH_FOR_FILTER:
         return False
 
     normalized_term = _normalize_term(term)
-    if not normalized_term.startswith(normalized_concept):
-        return False
     if normalized_term == normalized_concept:
         return True
-    if len(term.split()) > len(concept_name.split()):
+
+    longer, shorter = (
+        (normalized_term, normalized_concept)
+        if len(normalized_term) > len(normalized_concept)
+        else (normalized_concept, normalized_term)
+    )
+    if not longer.startswith(shorter):
         return False
-    return len(normalized_term) - len(normalized_concept) <= _MAX_SELF_REFERENCE_SUFFIX
+    return len(longer) - len(shorter) <= _MAX_SELF_REFERENCE_SUFFIX
 
 
 def _is_valid_forbidden_term(term: str) -> bool:

@@ -231,6 +231,10 @@ class TestSelfReferenceFilter:
             5, Subject.SCIENCE, ["지도 학습", "레이블", "분류기", "특징 공간"], "분류"
         )
         assert "분류기" not in pool
+        # 같은 실행의 나머지 항목은 개념명과 겹치지 않으므로 전부 금지어로 남는다.
+        # "레이블"은 개념명이 "분류"일 때 자기참조가 아니므로 계속 금지 대상이다
+        # (초등 교육과정 424청크에 0건 — _ALWAYS_FORBIDDEN 주석 참고).
+        assert {"지도 학습", "레이블", "특징 공간"} <= pool
 
     def test_exact_match_excluded_with_and_without_space(self):
         """'패턴 인식' 교안에서 개념명 그대로는 물론 공백만 다른 표기도 제외한다."""
@@ -248,17 +252,23 @@ class TestSelfReferenceFilter:
         assert {"지도 학습", "특징 공간", "템플릿 매칭"} <= pool
 
     def test_multi_word_derivative_not_excluded(self):
-        """접두가 겹쳐도 어절이 더 많으면 금지어로 남긴다 — 과잉 통과 방지.
-
-        "분류 모델"은 정규화 후 길이차가 2라 길이 조건만으로는 "분류기"와
-        구분되지 않는다. 어절 수 조건이 없으면 뒷단어가 짧은 복합어가 전부
-        새어 나간다.
-        """
+        """접두가 겹쳐도 2음절 이상 덧붙으면 독립된 전문 용어로 보고 남긴다."""
         pool = logic._build_forbidden_term_pool(
             5, Subject.SCIENCE, ["분류 알고리즘", "분류 모델"], "분류"
         )
         assert "분류 알고리즘" in pool
         assert "분류 모델" in pool
+
+    def test_compound_judgement_ignores_spacing(self):
+        """공백 유무로 결과가 갈리면 안 된다 — 정규화가 공백을 지우기 때문.
+
+        어절 수로 복합어를 가려내면 "분류 모델"은 남고 "분류모델"만 빠져나가
+        같은 말이 표기에 따라 다르게 판정된다.
+        """
+        pool = logic._build_forbidden_term_pool(
+            5, Subject.SCIENCE, ["분류 모델", "분류모델"], "분류"
+        )
+        assert {"분류 모델", "분류모델"} <= pool
 
     def test_same_word_count_derivative_excluded(self):
         """어절 수가 같은 파생어는 제외한다("패턴 인식" → "패턴 인식기")."""
@@ -309,6 +319,17 @@ class TestAlwaysForbiddenTerms:
         pool = logic._build_forbidden_term_pool(4, Subject.SCIENCE, [], "레이블")
         assert "레이블" not in pool
         assert "라벨" in pool  # 개념명과 무관한 쪽은 그대로 금지
+
+    def test_always_forbidden_yields_to_longer_concept_name(self):
+        """개념명이 금지어보다 긴 파생어여도 교착이다 — "레이블링" 수업의 "레이블"."""
+        pool = logic._build_forbidden_term_pool(4, Subject.SCIENCE, [], "레이블링")
+        assert "레이블" not in pool
+        assert "라벨" in pool
+
+    def test_always_forbidden_kept_for_unrelated_concept(self):
+        """개념명과 글자가 겹치지 않으면 학년과 무관하게 계속 금지어다."""
+        pool = logic._build_forbidden_term_pool(4, Subject.SCIENCE, [], "군집화")
+        assert {"레이블", "라벨"} <= pool
 
     def test_label_variant_detected_at_low_grade(self):
         plan = _make_lesson_plan()
