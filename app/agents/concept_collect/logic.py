@@ -142,7 +142,8 @@ def analyze_concept(
     # 2단계: 검색용 쿼리 재작성
     rewrite_prompt = QUERY_REWRITE_PROMPT.format(
         concept_name=concept.concept_name,
-key_operations=", ".join(concept.key_operations[:KEY_OPS_LIMIT.get(context.target_grade, 3)]),        prerequisite_ideas=", ".join(concept.prerequisite_ideas),
+        key_operations=", ".join(concept.key_operations[:KEY_OPS_LIMIT.get(context.target_grade, 3)]), 
+        prerequisite_ideas=", ".join(concept.prerequisite_ideas),
         target_grade=context.target_grade,
     )
     definition = generate_text(rewrite_prompt).strip()
