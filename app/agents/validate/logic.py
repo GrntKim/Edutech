@@ -71,9 +71,10 @@ REQ-005 예외 처리 원칙("과도한 차단 방지")에 따라 **오탐(과�
    교안이 상시 반려됐다 — 가르치려는 개념 이름을 쓰지 않고 그 개념을
    설명하는 것은 불가능하므로 C가 무엇을 만들든 위반이 된다. 판정은 방향을
    가리지 않는다 — 개념명이 더 긴 경우("레이블링" 수업의 "레이블")도 같은
-   교착이므로 함께 뺀다. 이 필터만은 ②뿐 아니라 `_ALWAYS_FORBIDDEN`(전 밴드
-   고정 금지어)에도 적용한다 — "레이블"처럼 교사가 개념명으로 그대로 입력할
-   수 있는 단어가 있기 때문이다(`_build_forbidden_term_pool` 참고).
+   교착이므로 함께 뺀다. 이 필터만은 ②뿐 아니라 ①에도 적용한다 — ①에도
+   "프로그래밍"처럼 교사가 개념명으로 그대로 입력할 수 있는 단어가 있기
+   때문이다(`_build_forbidden_term_pool` 참고). 다만 "분류" → "분류학"처럼
+   접미사가 다른 학문 분야를 가리키면 자기참조로 보지 않는다.
 
 매칭 자체("금지어가 텍스트 어디에 있는지 찾는 것")은 ①② 공통이며 이전과
 동일하다:
@@ -155,6 +156,12 @@ _MAX_SELF_REFERENCE_SUFFIX = 1
 # 개념명이 이보다 짧으면 자기참조 필터를 아예 적용하지 않는다. 1음절
 # 개념명으로 접두 매칭을 하면 무관한 용어까지 대량으로 빠져나간다.
 _MIN_CONCEPT_LENGTH_FOR_FILTER = 2
+
+# 그 자체가 별개의 학문 분야를 가리키는 파생 접미사. 개념명에 이 접미사만
+# 붙은 항목은 길이 예산 안에 들어와도 자기참조로 보지 않는다 — "분류" 개념의
+# 교안에서 "분류학"(생물 분류학)은 안 써도 되는 다른 용어이기 때문이다.
+# 이 모듈 상단 "매칭 규칙" 4번이 경고하는 모호성이 정확히 이 케이스다.
+_DISCIPLINE_SUFFIXES = ("학", "론")
 
 # 조사 제거 후 이 음절로 끝나면 용언 어간 잔재로 간주해 버린다(② 전용).
 _PREDICATE_STEM_REMNANTS = ("하", "되", "시키", "있", "없")
@@ -279,6 +286,12 @@ def _is_self_reference(term: str, concept_name: str) -> bool:
     파생어는 제외된다. 어절 수로 복합어를 가려내는 방법은 쓰지 않는다 —
     정규화가 공백을 지우므로 "분류 모델"과 "분류모델"이 서로 다르게 판정되어
     표기 차이만으로 결과가 갈린다.
+
+    예산 안에 들어와도 `_DISCIPLINE_SUFFIXES`로 끝나는 파생어는 제외하지
+    않는다. 이 모듈 상단 "매칭 규칙" 4번이 경고하는 "분류학"(생물 분류학)이
+    그 경우로, 개념명 "분류"와 1음절 차이지만 다른 학문 분야를 가리키는
+    독립 용어다. 반대 방향(개념명이 "분류학"이고 항목이 "분류")은 그대로
+    제외한다 — 분류학을 가르치면서 "분류"라는 말을 안 쓸 수는 없다.
     """
     normalized_concept = _normalize_term(concept_name)
     if len(normalized_concept) < _MIN_CONCEPT_LENGTH_FOR_FILTER:
@@ -288,14 +301,17 @@ def _is_self_reference(term: str, concept_name: str) -> bool:
     if normalized_term == normalized_concept:
         return True
 
+    term_is_longer = len(normalized_term) > len(normalized_concept)
     longer, shorter = (
         (normalized_term, normalized_concept)
-        if len(normalized_term) > len(normalized_concept)
+        if term_is_longer
         else (normalized_concept, normalized_term)
     )
     if not longer.startswith(shorter):
         return False
-    return len(longer) - len(shorter) <= _MAX_SELF_REFERENCE_SUFFIX
+    if len(longer) - len(shorter) > _MAX_SELF_REFERENCE_SUFFIX:
+        return False
+    return not (term_is_longer and longer.endswith(_DISCIPLINE_SUFFIXES))
 
 
 def _is_valid_forbidden_term(term: str) -> bool:
@@ -343,23 +359,25 @@ def _build_forbidden_term_pool(
     인자를 받는 이유는 (1) `validate()`의 시그니처·오케스트레이터 계약을
     유지하고, (2) 향후 과목별 확정 목록으로 세분화할 여지를 남기기 위해서다.
 
-    `concept_name`을 이용한 자기참조 제외(#50)는 ②와 `_ALWAYS_FORBIDDEN`에
-    적용하고, 학년군 차집합에서 나온 ①에는 적용하지 않는다. 갈린 이유는
-    "그 단어가 개념명으로 들어올 수 있는가"다 — ①은 교육과정 교과 용어라
-    AI 개념명으로 입력될 일이 사실상 없지만, `_ALWAYS_FORBIDDEN`의 "레이블"·
-    "라벨"은 교사가 그대로 입력할 수 있다. 그 경우 지금 고치려는 #50과 똑같이
-    "개념명을 쓸 수 없는데 항상 금지어"인 교착이 재발한다. 교착(무조건 반려)이
-    누출(그 개념을 가르치는 교안 한 편에 그 단어가 노출)보다 나쁘다고 봤다.
+    `concept_name`을 이용한 자기참조 제외(#50)는 **출처를 가리지 않고 전부**
+    적용한다. 처음에는 "①은 사람이 검수한 교과 용어라 AI 개념명으로 입력될
+    일이 없다"고 보고 ②에만 걸었는데, `_CURATED_FORBIDDEN[G5_6]`에 이미
+    "프로그래밍"이 있어 그 전제가 성립하지 않는다 — "프로그래밍"을 3학년
+    대상으로 요청하면 그 단어를 안 쓰고 교안을 쓸 수 없어 #50과 똑같은
+    무한 반려가 된다. 교착(무조건 반려)이 누출(그 개념을 가르치는 교안 한
+    편에 그 단어가 노출)보다 나쁘다는 판단은 모든 출처에 똑같이 적용된다.
     """
-    curriculum_terms = _curriculum_forbidden_terms(target_grade) - {
-        t for t in _ALWAYS_FORBIDDEN if _is_self_reference(t, concept_name)
+    curriculum_terms = {
+        t
+        for t in _curriculum_forbidden_terms(target_grade)
+        if not _is_self_reference(t, concept_name)
     }
     caution_filtered = {
         t
         for t in caution_terms
         if _is_valid_forbidden_term(t) and not _is_self_reference(t, concept_name)
     }
-    return set(curriculum_terms) | caution_filtered
+    return curriculum_terms | caution_filtered
 
 
 @lru_cache(maxsize=None)

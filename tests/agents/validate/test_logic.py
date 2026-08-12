@@ -259,6 +259,17 @@ class TestSelfReferenceFilter:
         assert "분류 알고리즘" in pool
         assert "분류 모델" in pool
 
+    def test_discipline_suffix_derivative_not_excluded(self):
+        """'분류학'(생물 분류학)은 1음절 차이여도 다른 학문 분야라 금지어로 남는다."""
+        pool = logic._build_forbidden_term_pool(
+            4, Subject.SCIENCE, ["분류학", "분류론", "지도 학습"], "분류"
+        )
+        assert {"분류학", "분류론", "지도 학습"} <= pool
+
+    def test_discipline_suffix_concept_still_frees_its_stem(self):
+        """반대 방향은 그대로 제외한다 — '분류학'을 가르치며 '분류'를 안 쓸 수 없다."""
+        assert logic._is_self_reference("분류", "분류학") is True
+
     def test_compound_judgement_ignores_spacing(self):
         """공백 유무로 결과가 갈리면 안 된다 — 정규화가 공백을 지우기 때문.
 
@@ -325,6 +336,20 @@ class TestAlwaysForbiddenTerms:
         pool = logic._build_forbidden_term_pool(4, Subject.SCIENCE, [], "레이블링")
         assert "레이블" not in pool
         assert "라벨" in pool
+
+    def test_curated_term_yields_to_self_reference(self):
+        """①에도 "프로그래밍"처럼 개념명으로 입력될 수 있는 용어가 있다.
+
+        3학년은 G5_6 목록 전체가 금지어라 "프로그래밍"이 포함되는데, 그
+        개념을 가르치는 교안에서 그 단어를 뺄 수는 없다(#50과 같은 교착).
+        """
+        pool = logic._build_forbidden_term_pool(3, Subject.SCIENCE, [], "프로그래밍")
+        assert "프로그래밍" not in pool
+        assert "백분율" in pool  # 같은 학년군의 무관한 용어는 그대로 금지
+
+    def test_curated_term_kept_for_unrelated_concept(self):
+        pool = logic._build_forbidden_term_pool(3, Subject.SCIENCE, [], "군집화")
+        assert "프로그래밍" in pool
 
     def test_always_forbidden_kept_for_unrelated_concept(self):
         """개념명과 글자가 겹치지 않으면 학년과 무관하게 계속 금지어다."""
