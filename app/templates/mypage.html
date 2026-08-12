@@ -36,7 +36,11 @@
                 <tr>
                     <td>{{ item.concept_name }}</td>
                     <td>{{ item.target_grade }}학년</td>
-                    <td>{{ item.validation_status }}</td>
+                    {# lesson_output이 비면 파이프라인이 조기 종료한 실패 기록이다. #}
+                    <td>
+                        {% if not item.lesson_output %}<strong>생성 실패</strong> — {% endif %}
+                        {{ item.validation_status }}
+                    </td>
                     <td>{{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
                     <td><a href="/mypage/requests/{{ item.id }}">상세보기</a></td>
                     <td>

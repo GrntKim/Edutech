@@ -100,6 +100,16 @@ main {
     background: #fff6e0;
 }
 
+.rate-limit {
+    max-width: 900px;
+    margin: 1rem auto 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d6d6d6;
+    border-radius: 6px;
+    background: #f7f7f7;
+    font-size: 0.9rem;
+}
+
 .download-btn {
     display: inline-block;
     margin-bottom: 1rem;

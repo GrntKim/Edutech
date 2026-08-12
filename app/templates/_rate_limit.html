@@ -1,0 +1,18 @@
+{# 남은 생성 횟수 배너. index.html이 직접 include하고, generate() 응답(result.html)은
+   rate_oob=True로 include해 htmx out-of-band swap으로 같은 id를 갈아끼운다 —
+   htmx가 #result만 교체하므로 폼 옆 배너는 OOB 없이는 갱신되지 않는다.
+
+   rate_status가 없는 컨텍스트(mypage_detail이 result.html을 include하는 경우)에서는
+   통째로 렌더되지 않는다. #}
+{% if rate_status %}
+<div id="rate-limit" class="rate-limit"{% if rate_oob %} hx-swap-oob="true"{% endif %}>
+    {% if user and user.role == "admin" %}
+    남은 생성 횟수: <strong>무제한</strong> (admin)
+    {% else %}
+    남은 생성 횟수: 오늘
+    <strong>{{ [rate_status.daily_limit - rate_status.daily_used, 0] | max }}</strong>/{{ rate_status.daily_limit }}회,
+    이번 주
+    <strong>{{ [rate_status.weekly_limit - rate_status.weekly_used, 0] | max }}</strong>/{{ rate_status.weekly_limit }}회
+    {% endif %}
+</div>
+{% endif %}

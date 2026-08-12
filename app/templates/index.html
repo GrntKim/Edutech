@@ -27,6 +27,7 @@
     <main>
         <p>교안 생성 시스템에 오신 것을 환영합니다.</p>
         {% if user %}
+        {% include "_rate_limit.html" %}
         <form hx-post="/generate" hx-target="#result" hx-indicator="#spinner" hx-request='{"timeout": 180000}' hx-sync="this:drop" hx-disabled-elt="find button" class="info-form">
             <div>
                 <label for="concept-input">개념</label>
