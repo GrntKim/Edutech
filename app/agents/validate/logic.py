@@ -64,7 +64,10 @@ REQ-005 예외 처리 원칙("과도한 차단 방지")에 따라 **오탐(과�
    그 접두 파생어는 후보에서 뺀다. 2026-08-12 실측(#50)에서 "분류" 질의에
    `분류기`가, "패턴 인식" 질의에 `패턴 인식`이 `caution_terms`로 생성돼
    교안이 상시 반려됐다 — 가르치려는 개념 이름을 쓰지 않고 그 개념을
-   설명하는 것은 불가능하므로 C가 무엇을 만들든 위반이 된다.
+   설명하는 것은 불가능하므로 C가 무엇을 만들든 위반이 된다. 이 필터만은
+   ②뿐 아니라 `_ALWAYS_FORBIDDEN`(전 밴드 고정 금지어)에도 적용한다 —
+   "레이블"처럼 교사가 개념명으로 그대로 입력할 수 있는 단어가 있어 같은
+   교착이 재발할 수 있기 때문이다(`_build_forbidden_term_pool` 참고).
 
 매칭 자체("금지어가 텍스트 어디에 있는지 찾는 것")은 ①② 공통이며 이전과
 동일하다:
@@ -249,7 +252,7 @@ def _normalize_term(text: str) -> str:
 
 
 def _is_self_reference(term: str, concept_name: str) -> bool:
-    """가르치려는 개념명 자체이거나 그 접두 파생어면 True(② 후보에서 제외 대상).
+    """가르치려는 개념명 자체이거나 그 접두 파생어면 True(제외 대상).
 
     #50: A1이 "분류" 질의에 `분류기`를, "패턴 인식" 질의에 `패턴 인식`을
     caution_terms로 내보내 교안이 상시 반려됐다. 개념명을 쓰지 않고 그 개념을
@@ -257,8 +260,13 @@ def _is_self_reference(term: str, concept_name: str) -> bool:
 
     매칭은 (1) 공백 정규화 후 완전 일치, (2) 개념명을 접두로 하고 뒤에
     `_MAX_SELF_REFERENCE_SUFFIX` 이하가 붙은 파생어 두 가지로만 좁힌다.
-    "분류 알고리즘"처럼 개념명으로 시작하되 별도 어절이 붙은 항목은 여전히
-    금지어로 남는다 — 넓게 잡으면 진짜 금지해야 할 용어가 새어 나간다.
+
+    파생어 판정에는 어절 수 조건을 함께 건다 — 항목의 어절 수가 개념명보다
+    많으면 제외하지 않는다. 길이 차이만 보면 "분류 모델"(정규화 후 길이차 2)이
+    "분류기"와 구분되지 않아, 뒷단어가 짧은 복합어가 통째로 새어 나간다.
+    "분류 모델"·"분류 알고리즘"은 개념명으로 시작하더라도 독립된 전문 용어이므로
+    계속 금지어로 남는다. 반대로 "패턴 인식" → "패턴 인식기"처럼 어절 수가
+    같은 파생어는 제외된다.
     """
     normalized_concept = _normalize_term(concept_name)
     if len(normalized_concept) < _MIN_CONCEPT_LENGTH_FOR_FILTER:
@@ -266,6 +274,10 @@ def _is_self_reference(term: str, concept_name: str) -> bool:
 
     normalized_term = _normalize_term(term)
     if not normalized_term.startswith(normalized_concept):
+        return False
+    if normalized_term == normalized_concept:
+        return True
+    if len(term.split()) > len(concept_name.split()):
         return False
     return len(normalized_term) - len(normalized_concept) <= _MAX_SELF_REFERENCE_SUFFIX
 
@@ -276,7 +288,7 @@ def _is_valid_forbidden_term(term: str) -> bool:
     ①(`_CURATED_FORBIDDEN`)은 사람이 이미 검수했으므로 이 필터를 거치지
     않는다 — LLM이 매 요청마다 생성하는 동적 값(②)에만 적용한다.
     """
-    stripped = term.replace(" ", "")
+    stripped = _normalize_term(term)
     if len(stripped) < _MIN_TERM_LENGTH:
         return False
     if not any("가" <= ch <= "힣" for ch in stripped):
@@ -315,10 +327,17 @@ def _build_forbidden_term_pool(
     인자를 받는 이유는 (1) `validate()`의 시그니처·오케스트레이터 계약을
     유지하고, (2) 향후 과목별 확정 목록으로 세분화할 여지를 남기기 위해서다.
 
-    `concept_name`은 자기참조 제외(#50)에만 쓰며 ②에만 적용한다 — ①은 사람이
-    검수한 학년 규칙이라 "지금 가르치는 개념"이라는 이유로 풀어주지 않는다.
+    `concept_name`을 이용한 자기참조 제외(#50)는 ②와 `_ALWAYS_FORBIDDEN`에
+    적용하고, 학년군 차집합에서 나온 ①에는 적용하지 않는다. 갈린 이유는
+    "그 단어가 개념명으로 들어올 수 있는가"다 — ①은 교육과정 교과 용어라
+    AI 개념명으로 입력될 일이 사실상 없지만, `_ALWAYS_FORBIDDEN`의 "레이블"·
+    "라벨"은 교사가 그대로 입력할 수 있다. 그 경우 지금 고치려는 #50과 똑같이
+    "개념명을 쓸 수 없는데 항상 금지어"인 교착이 재발한다. 교착(무조건 반려)이
+    누출(그 개념을 가르치는 교안 한 편에 그 단어가 노출)보다 나쁘다고 봤다.
     """
-    curriculum_terms = _curriculum_forbidden_terms(target_grade)
+    curriculum_terms = _curriculum_forbidden_terms(target_grade) - {
+        t for t in _ALWAYS_FORBIDDEN if _is_self_reference(t, concept_name)
+    }
     caution_filtered = {
         t
         for t in caution_terms

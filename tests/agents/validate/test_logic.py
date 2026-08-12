@@ -248,11 +248,24 @@ class TestSelfReferenceFilter:
         assert {"지도 학습", "특징 공간", "템플릿 매칭"} <= pool
 
     def test_multi_word_derivative_not_excluded(self):
-        """접두가 겹쳐도 별도 어절이 붙으면 금지어로 남긴다 — 과잉 통과 방지."""
+        """접두가 겹쳐도 어절이 더 많으면 금지어로 남긴다 — 과잉 통과 방지.
+
+        "분류 모델"은 정규화 후 길이차가 2라 길이 조건만으로는 "분류기"와
+        구분되지 않는다. 어절 수 조건이 없으면 뒷단어가 짧은 복합어가 전부
+        새어 나간다.
+        """
         pool = logic._build_forbidden_term_pool(
-            5, Subject.SCIENCE, ["분류 알고리즘"], "분류"
+            5, Subject.SCIENCE, ["분류 알고리즘", "분류 모델"], "분류"
         )
         assert "분류 알고리즘" in pool
+        assert "분류 모델" in pool
+
+    def test_same_word_count_derivative_excluded(self):
+        """어절 수가 같은 파생어는 제외한다("패턴 인식" → "패턴 인식기")."""
+        pool = logic._build_forbidden_term_pool(
+            5, Subject.SCIENCE, ["패턴 인식기", "패턴인식기"], "패턴 인식"
+        )
+        assert pool.isdisjoint({"패턴 인식기", "패턴인식기"})
 
     def test_short_concept_name_disables_filter(self):
         """1음절 개념명으로 접두 매칭하면 무관한 용어가 대량으로 빠져나간다."""
@@ -290,6 +303,12 @@ class TestAlwaysForbiddenTerms:
         )
         assert result.passed is False
         assert "레이블" in result.violations
+
+    def test_always_forbidden_yields_to_self_reference(self):
+        """개념명이 고정 금지어 자체면 #50과 같은 교착이 되므로 이때만 풀어준다."""
+        pool = logic._build_forbidden_term_pool(4, Subject.SCIENCE, [], "레이블")
+        assert "레이블" not in pool
+        assert "라벨" in pool  # 개념명과 무관한 쪽은 그대로 금지
 
     def test_label_variant_detected_at_low_grade(self):
         plan = _make_lesson_plan()
