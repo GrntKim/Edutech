@@ -60,18 +60,23 @@ REQ-005 예외 처리 원칙("과도한 차단 방지")에 따라 **오탐(과�
 3. **상용어 제외 목록** (`_ALWAYS_ALLOWED`): 위 두 필터를 통과해도 남을 수
    있는 상용 서술 표현·동음이의 일상어에 대한 안전망("모서리"처럼 교육과정
    용어이자 일상어라 문맥 판단이 불가능한 경우 포함).
+4. **자기참조 제외** (`_is_self_reference`): 사용자가 입력한 개념명 자체나
+   그 접두 파생어는 후보에서 뺀다. 2026-08-12 실측(#50)에서 "분류" 질의에
+   `분류기`가, "패턴 인식" 질의에 `패턴 인식`이 `caution_terms`로 생성돼
+   교안이 상시 반려됐다 — 가르치려는 개념 이름을 쓰지 않고 그 개념을
+   설명하는 것은 불가능하므로 C가 무엇을 만들든 위반이 된다.
 
 매칭 자체("금지어가 텍스트 어디에 있는지 찾는 것")은 ①② 공통이며 이전과
 동일하다:
 
-4. **어절 경계 매칭**: 금지어는 어절 "시작"에서만 매칭하고, 그 뒤가
+5. **어절 경계 매칭**: 금지어는 어절 "시작"에서만 매칭하고, 그 뒤가
    어절 끝이거나 알려진 조사여야 한다. 조사 목록 외의 임의 접미사(파생어)는
    매칭하지 않는다 — 예를 들어 "분류"가 금지어일 때 "분류를"은 검출하지만
    "분류학"/"분류하기"는 검출하지 않는다. 파생어까지 잡으려 하면 완전히
    다른 개념("분류학"은 생물 분류학일 수도, AI 분류 문제일 수도 있음)을
    오판정할 위험이 더 크다고 판단해, "정확히 그 형태 + 조사"까지만 잡는
    보수적 정책을 택했다.
-5. 부분 문자열 매칭은 금지한다("미분류"에 "분류"가 매칭되지 않도록 어절
+6. 부분 문자열 매칭은 금지한다("미분류"에 "분류"가 매칭되지 않도록 어절
    시작 위치를 lookbehind로 강제한다).
 
 ## 검사 대상 필드
@@ -92,6 +97,12 @@ reflection_questions/table).
 것이 확인됐다. C의 교안은 한국어이므로 이 값들은 매칭되지 않아 ②가 사실상
 항상 통과한다. A1에 프롬프트 조정을 요청한 상태이며, 그 전까지는 ①만으로
 검증이 성립하도록 설계했다(②가 빈 리스트여도 정상 동작).
+
+2026-08-12(#50)에는 그 반대 방향 실패가 확인됐다 — 위 건이 "매칭이 안 돼
+②가 항상 통과"였다면, 이번엔 "매칭이 너무 정확해 회피 불가능한 단어까지
+금지어가 됨"이다. 위 필터 4번(자기참조 제외)으로 대응했다. `caution_terms`는
+매 호출 3~5개가 재선정되는 값이라 A1 프롬프트로는 보장되지 않는 반면(A1
+담당자 확인) D 필터는 결정론적이라 D에서 처리한다.
 """
 
 from __future__ import annotations
@@ -124,6 +135,16 @@ _JOSA_SUFFIXES = sorted(
 _HANGUL_RANGE = "가-힣"
 
 _MIN_TERM_LENGTH = 3  # 1~2음절 단독 금지어 제외(② caution_terms 전용)
+
+# 자기참조 판정(② 전용, #50). 개념명 뒤에 이 길이 이하가 덧붙은 항목까지만
+# 파생어로 보고 제외한다 — "분류"→"분류기"(+1)는 빼되 "분류 알고리즘"(+4)은
+# 남긴다. 넓게 잡으면 진짜 금지해야 할 전문 용어가 통째로 새어 나가므로
+# 보수적으로 시작한다.
+_MAX_SELF_REFERENCE_SUFFIX = 2
+
+# 개념명이 이보다 짧으면 자기참조 필터를 아예 적용하지 않는다. 1음절
+# 개념명으로 접두 매칭을 하면 무관한 용어까지 대량으로 빠져나간다.
+_MIN_CONCEPT_LENGTH_FOR_FILTER = 2
 
 # 조사 제거 후 이 음절로 끝나면 용언 어간 잔재로 간주해 버린다(② 전용).
 _PREDICATE_STEM_REMNANTS = ("하", "되", "시키", "있", "없")
@@ -168,6 +189,14 @@ _ALWAYS_ALLOWED = frozenset(
 # - 제외: 파싱 잔재("름다움", "모눈종", "문제해") — A2에 공유함
 # - 제외: "인공지능", "데이터" — 본 시스템의 교안 주제 자체라 금지 불가
 #
+# 학년군과 무관하게 전 밴드에 적용하는 고정 금지어. 교육과정 424청크를
+# 전수 조회한 결과 두 용어 모두 0건이라(A1 담당자 확인, 2026-08-12) 어느
+# 학년에서도 "이미 배운 말"이 될 수 없다. 군집화 교안에서 "정답 레이블
+# 없이"라는 표현이 학습목표·정리 단계에 노출되고도 검증을 통과한 사례가
+# 계기다 — 군집화에서 "레이블"은 개념이 쓰는 용어가 아니라 "없다"고
+# 부정하는 용어라 A1의 caution_terms 후보에 잘 잡히지 않는다.
+_ALWAYS_FORBIDDEN = frozenset({"레이블", "라벨"})
+
 # G1_2는 정의하지 않는다. 1~2학년 어휘는 어느 학년에서도 금지되지 않는다.
 _CURATED_FORBIDDEN: dict[GradeBand, frozenset[str]] = {
     GradeBand.G3_4: frozenset({
@@ -214,6 +243,33 @@ def _is_predicate_form(term: str) -> bool:
     return term.endswith(_PREDICATE_BARE_ENDINGS)
 
 
+def _normalize_term(text: str) -> str:
+    """공백 차이를 흡수한다("패턴 인식" == "패턴인식")."""
+    return text.replace(" ", "")
+
+
+def _is_self_reference(term: str, concept_name: str) -> bool:
+    """가르치려는 개념명 자체이거나 그 접두 파생어면 True(② 후보에서 제외 대상).
+
+    #50: A1이 "분류" 질의에 `분류기`를, "패턴 인식" 질의에 `패턴 인식`을
+    caution_terms로 내보내 교안이 상시 반려됐다. 개념명을 쓰지 않고 그 개념을
+    가르치는 것은 불가능하므로 금지어로 성립하지 않는다.
+
+    매칭은 (1) 공백 정규화 후 완전 일치, (2) 개념명을 접두로 하고 뒤에
+    `_MAX_SELF_REFERENCE_SUFFIX` 이하가 붙은 파생어 두 가지로만 좁힌다.
+    "분류 알고리즘"처럼 개념명으로 시작하되 별도 어절이 붙은 항목은 여전히
+    금지어로 남는다 — 넓게 잡으면 진짜 금지해야 할 용어가 새어 나간다.
+    """
+    normalized_concept = _normalize_term(concept_name)
+    if len(normalized_concept) < _MIN_CONCEPT_LENGTH_FOR_FILTER:
+        return False
+
+    normalized_term = _normalize_term(term)
+    if not normalized_term.startswith(normalized_concept):
+        return False
+    return len(normalized_term) - len(normalized_concept) <= _MAX_SELF_REFERENCE_SUFFIX
+
+
 def _is_valid_forbidden_term(term: str) -> bool:
     """② caution_terms 채택 조건: 길이/한글 포함/용언 아님/상용어 아님을 모두 만족해야 함.
 
@@ -231,33 +287,43 @@ def _is_valid_forbidden_term(term: str) -> bool:
 
 
 def _curriculum_forbidden_terms(target_grade: int) -> frozenset[str]:
-    """대상 학년이 아직 도달하지 않은 학년군의 확정 금지어를 합친다.
+    """대상 학년이 아직 도달하지 않은 학년군의 확정 금지어 + 전 밴드 고정 금지어.
 
     grade_to_bands()가 누적 범위를 주므로, `_CURATED_FORBIDDEN`의 전체
     학년군 키에서 그것을 빼면 "아직 배우지 않은 학년군"이 된다. 예를 들어
     4학년은 {G1_2, G3_4}가 누적이므로 G5_6 목록만 금지어가 된다. DB 조회가
     없는 순수 함수라 캐싱이 필요 없다.
+
+    `_ALWAYS_FORBIDDEN`은 학년군 차집합과 무관하게 항상 합친다 — 교육과정에
+    아예 등장하지 않는 용어라 "누적 범위에 들어왔다"는 개념이 성립하지 않는다.
     """
     accessible_bands = grade_to_bands(target_grade)
     not_yet_bands = set(_CURATED_FORBIDDEN) - accessible_bands
 
-    forbidden: set[str] = set()
+    forbidden: set[str] = set(_ALWAYS_FORBIDDEN)
     for band in not_yet_bands:
         forbidden |= _CURATED_FORBIDDEN[band]
     return frozenset(forbidden)
 
 
 def _build_forbidden_term_pool(
-    target_grade: int, subject: Subject, caution_terms: list[str]
+    target_grade: int, subject: Subject, caution_terms: list[str], concept_name: str
 ) -> set[str]:
     """① 큐레이션 목록 + ② A1 caution_terms를 합집합한다.
 
     `subject`는 현재 ① 파생에 쓰이지 않는다(전 과목 공통 목록). 그래도
     인자를 받는 이유는 (1) `validate()`의 시그니처·오케스트레이터 계약을
     유지하고, (2) 향후 과목별 확정 목록으로 세분화할 여지를 남기기 위해서다.
+
+    `concept_name`은 자기참조 제외(#50)에만 쓰며 ②에만 적용한다 — ①은 사람이
+    검수한 학년 규칙이라 "지금 가르치는 개념"이라는 이유로 풀어주지 않는다.
     """
     curriculum_terms = _curriculum_forbidden_terms(target_grade)
-    caution_filtered = {t for t in caution_terms if _is_valid_forbidden_term(t)}
+    caution_filtered = {
+        t
+        for t in caution_terms
+        if _is_valid_forbidden_term(t) and not _is_self_reference(t, concept_name)
+    }
     return set(curriculum_terms) | caution_filtered
 
 
@@ -369,15 +435,22 @@ def validate(
     *,
     subject: Subject,
     caution_terms: list[str],
+    concept_name: str,
 ) -> ValidationResult:
     """교안을 검증하고 ValidationResult를 반환한다.
 
     매 호출을 독립적으로 처리한다 — 몇 번째 재시도인지는 알 필요가 없다
     (재시도 카운터는 오케스트레이터가 지역 변수로 관리).
+
+    `concept_name`은 A1이 구조화한 개념명(`StructuredConcept.concept_name`)이며
+    자기참조 금지어 제외에 쓴다(#50). `PipelineContext`에는 없는 값이라
+    오케스트레이터가 별도 인자로 넘긴다.
     """
     start = time.monotonic()
 
-    forbidden_terms = _build_forbidden_term_pool(context.target_grade, subject, caution_terms)
+    forbidden_terms = _build_forbidden_term_pool(
+        context.target_grade, subject, caution_terms, concept_name
+    )
     texts = _collect_student_facing_texts(lesson_plan)
     violations = _find_violations(texts, forbidden_terms)
 
