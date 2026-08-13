@@ -484,9 +484,45 @@ table.history-table td:last-child {
 }
 
 .gen-progress-title {
-    margin-bottom: var(--space-3);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
     font-size: 0.9375rem;
     font-weight: 600;
+}
+
+.gen-percent {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-strong);
+}
+
+/* 단계 5개를 20%씩 나눈 막대. 시간이 아니라 단계 수 기준이라 C(교안 작성)에서
+   오래 머문다 — 1% 단위로 시간을 추적하는 척하지 않기 위한 선택이다. */
+.gen-bar {
+    height: 6px;
+    margin-bottom: var(--space-4);
+    background: var(--accent-soft);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+/* 패널이 폴링마다 outerHTML로 교체돼 매번 새 노드가 된다 — transition은 걸리지
+   않으므로 서버가 알려준 직전 값에서 keyframe으로 움직인다. */
+.gen-bar-fill {
+    height: 100%;
+    width: var(--gen-to, 0%);
+    background: var(--accent);
+    border-radius: inherit;
+    animation: gen-bar-grow 0.6s ease-out;
+}
+
+@keyframes gen-bar-grow {
+    from { width: var(--gen-from, 0%); }
+    to   { width: var(--gen-to, 0%); }
 }
 
 /* 기본 숫자 마커 대신 단계 번호를 직접 그린다 — 완료/진행 중 상태를 그 자리에 표시한다. */
@@ -628,5 +664,10 @@ table.history-table td:last-child {
     #page-progress::after {
         animation: none;
         width: 100%;
+    }
+
+    /* 막대는 애니메이션 없이 현재 값으로 바로 선다(width는 그대로 유지된다). */
+    .gen-bar-fill {
+        animation: none;
     }
 }

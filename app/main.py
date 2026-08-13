@@ -175,6 +175,10 @@ class _GenerationJob:
     started_at: float = field(default_factory=time.monotonic)
     stage: str = STAGES[0][0]
     retry_count: int = 0
+    # 진행률(%)과 "직전 폴링에 실제로 내보낸 진행률". 둘 다 필요한 이유는
+    # _progress_fragment 주석 참고.
+    progress: int = 0
+    reported_progress: int = 0
     done: bool = False
     result: PipelineResult | None = None
     request_id: UUID | None = None
@@ -194,6 +198,24 @@ GENERATION_JOB_TTL_SECONDS = 1800
 # 이 시간을 넘겨도 안 끝나면 폴링을 멈춘다. 파이프라인 자체는 계속 돌아
 # 기록은 마이페이지에 남는다.
 GENERATION_TIMEOUT_SECONDS = 600
+
+# 마지막 단계(검증)에서 100%를 채우면 결과가 아직 없는데 다 끝난 것처럼 보인다.
+# 100%는 결과 조각이 실제로 화면에 들어올 때만 의미가 있으므로 여기서 멈춘다.
+GENERATION_PROGRESS_MAX = 95
+
+
+def _stage_progress(stage: str) -> int:
+    """단계 하나를 지날 때마다 균등하게 채운다(5단계 = 20%씩).
+
+    시간이 아니라 단계 수 기준이다 — 실제로는 C(교안 작성)가 가장 길어 80%에
+    오래 머문다. 1% 단위로 시간을 추적하는 척하지 않기 위한 선택이고, 단계
+    전환 자체는 파이프라인이 실제로 보낸 신호라 거짓이 아니다. 단계별 실측
+    소요 시간이 쌓이면 가중치를 다르게 주면 된다.
+    """
+    codes = [code for code, _label in STAGES]
+    if stage not in codes:
+        return 0
+    return min((codes.index(stage) + 1) * 100 // len(codes), GENERATION_PROGRESS_MAX)
 
 MSG_GENERATION_FAILED = "교안 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."
 MSG_GENERATION_TIMEOUT = (
@@ -234,6 +256,10 @@ def _run_generation(job_id: str) -> None:
                 return
             current.stage = stage
             current.retry_count = retry_count
+            # 검증에 걸려 교안 작성으로 되돌아가도 막대는 뒤로 가지 않는다.
+            # 뒤로 가는 진행 막대는 없는 것보다 나쁘다 — 재시도 중이라는 사실은
+            # 진행 패널의 안내 문구가 따로 알린다.
+            current.progress = max(current.progress, _stage_progress(stage))
 
     try:
         result = run_pipeline(
@@ -278,9 +304,21 @@ def _finish_generation(
 
 
 def _progress_fragment(request: Request, job_id: str, job: _GenerationJob) -> Response:
-    """진행 패널 조각. 자기 자신을 교체하며 계속 폴링한다."""
-    stage_codes = [code for code, _ in STAGES]
-    current_index = stage_codes.index(job.stage) if job.stage in stage_codes else 0
+    """진행 패널 조각. 자기 자신을 교체하며 계속 폴링한다.
+
+    직전에 내보낸 진행률(previous_progress)을 함께 넘긴다. 패널은 폴링마다
+    outerHTML로 통째 교체돼 매번 새 DOM 노드가 되므로, CSS transition은 걸리지
+    않고 막대가 그냥 튄다. 시작값을 알려주면 keyframe으로 그 값에서 현재 값까지
+    애니메이션할 수 있다.
+    """
+    stage_codes = [code for code, _label in STAGES]
+    with _generation_jobs_lock:
+        current_index = stage_codes.index(job.stage) if job.stage in stage_codes else 0
+        progress = job.progress
+        previous_progress = job.reported_progress
+        job.reported_progress = progress
+        retry_count = job.retry_count
+
     return templates.TemplateResponse(
         request,
         "_generate_progress.html",
@@ -288,7 +326,9 @@ def _progress_fragment(request: Request, job_id: str, job: _GenerationJob) -> Re
             "job_id": job_id,
             "stages": STAGES,
             "current_index": current_index,
-            "retry_count": job.retry_count,
+            "progress": progress,
+            "previous_progress": previous_progress,
+            "retry_count": retry_count,
             "max_retries": MAX_RETRIES,
         },
     )

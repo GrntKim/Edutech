@@ -340,6 +340,62 @@ def _job_states():
         return [(job.stage, job.retry_count) for job in main._generation_jobs.values()]
 
 
+def _job_progress():
+    with main._generation_jobs_lock:
+        return [job.progress for job in main._generation_jobs.values()]
+
+
+def test_progress_bar_fills_by_stage_and_never_goes_backwards(client, monkeypatch, saved_rows):
+    """단계마다 20%씩 차오르되, 재시도로 되돌아가도 막대는 줄지 않는다."""
+    observed = []
+
+    def fake_pipeline(concept_input, on_stage=None):
+        for stage, retry in [("A1", 0), ("A2", 0), ("B", 0), ("C", 0), ("D", 0), ("C", 1), ("D", 1)]:
+            on_stage(stage, "start", retry)
+            observed.append(_job_progress()[0])
+        return PipelineResult(
+            lesson_plan=LESSON_PLAN,
+            validation=ValidationResult(passed=True),
+            status=PipelineStatus.SUCCESS,
+            warning=None,
+        )
+
+    monkeypatch.setattr(main, "run_pipeline", fake_pipeline)
+
+    client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+
+    # 마지막 단계는 95%에서 멈춘다 — 결과가 아직 없는데 100%면 다 끝난 것처럼 보인다.
+    assert observed == [20, 40, 60, 80, 95, 95, 95]
+
+
+def test_progress_fragment_carries_previous_value_for_animation(client, monkeypatch, saved_rows):
+    """막대가 튀지 않으려면 직전에 내보낸 값이 조각에 같이 실려야 한다.
+
+    패널은 폴링마다 outerHTML로 통째 교체돼 매번 새 DOM 노드가 되므로 CSS
+    transition이 걸리지 않는다.
+    """
+    job_id = "b" * 32
+    job = main._GenerationJob(
+        user=client.app.dependency_overrides[auth.get_current_user](),
+        concept="이미지 인식",
+        grade=5,
+    )
+    job.stage = "B"
+    job.progress = 60
+    job.reported_progress = 40
+    with main._generation_jobs_lock:
+        main._generation_jobs[job_id] = job
+
+    body = client.get(f"/generate/progress/{job_id}").text
+
+    assert "--gen-from: 40%" in body
+    assert "--gen-to: 60%" in body
+    assert 'aria-valuenow="60"' in body
+    # 다음 폴링은 60에서 출발해야 한다.
+    with main._generation_jobs_lock:
+        assert main._generation_jobs[job_id].reported_progress == 60
+
+
 def test_generate_progress_hides_other_users_job(client, monkeypatch, saved_rows):
     """job_id를 알아내도 남의 생성 결과는 볼 수 없다."""
     other = _user()

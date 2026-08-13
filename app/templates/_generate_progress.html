@@ -9,7 +9,17 @@
      hx-target="this"
      hx-swap="outerHTML"
      hx-indicator="#gen-progress">
-    <p class="gen-progress-title">교안을 만들고 있습니다. 이 페이지를 벗어나면 결과를 잃습니다.</p>
+    <p class="gen-progress-title">
+        교안을 만들고 있습니다. 이 페이지를 벗어나면 결과를 잃습니다.
+        <span class="gen-percent">{{ progress }}%</span>
+    </p>
+    {# 막대는 단계 수 기준으로 5분할된다(20%씩). 패널이 폴링마다 통째로 교체돼
+       CSS transition이 안 걸리므로, 직전 값에서 현재 값까지 keyframe으로 움직인다. #}
+    <div class="gen-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+         aria-valuenow="{{ progress }}" aria-label="교안 생성 진행률">
+        <div class="gen-bar-fill"
+             style="--gen-from: {{ previous_progress }}%; --gen-to: {{ progress }}%"></div>
+    </div>
     <ol class="gen-stages">
         {% for code, label in stages %}
         <li class="{% if loop.index0 < current_index %}done{% elif loop.index0 == current_index %}current{% endif %}">
