@@ -8,6 +8,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID, uuid4
@@ -66,6 +67,20 @@ def status_label(value: str) -> str:
 
 
 templates.env.filters["status_label"] = status_label
+
+
+def current_year() -> int:
+    """푸터의 저작권 연도.
+
+    예전에는 템플릿에서 document.write(new Date().getFullYear())로 찍었는데,
+    hx-boost가 body를 교체하면 그 스크립트가 문서 로드 이후에 실행된다 —
+    그 시점의 document.write는 문서 전체를 덮어써서 페이지가 연도 네 글자만
+    남는다. 서버에서 렌더해 스크립트 자체를 없앤다.
+    """
+    return datetime.now().year
+
+
+templates.env.globals["current_year"] = current_year
 
 
 @app.get("/", response_class=HTMLResponse)

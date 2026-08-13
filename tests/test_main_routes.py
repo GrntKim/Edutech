@@ -531,6 +531,20 @@ def test_generate_refreshes_banner_out_of_band(client, monkeypatch, saved_rows):
     assert 'hx-swap-oob="true"' in body
 
 
+def test_pages_do_not_use_document_write(client, monkeypatch):
+    """hx-boost가 body를 교체한 뒤 실행되는 document.write는 문서 전체를 덮어쓴다.
+
+    푸터 연도를 그렇게 찍고 있어서, 링크로 이동하면 페이지에 연도 네 글자만
+    남고 새로고침해야 정상으로 돌아왔다. 연도는 서버에서 렌더한다.
+    """
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    for path in ("/", "/login", "/signup"):
+        body = client.get(path).text
+        assert "document.write" not in body, path
+        assert f"&copy; {main.current_year()} EDUTECH" in body, path
+
+
 def test_mypage_detail_has_no_rate_banner(client, monkeypatch, user):
     """result.html을 include하는 상세 페이지에는 rate_status가 없어 배너가 안 뜬다."""
     item = _lesson_request(user.id, LESSON_PLAN)

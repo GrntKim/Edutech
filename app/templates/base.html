@@ -17,6 +17,22 @@
     <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
     {# CDN 대신 벤더링한 사본을 쓴다. 버전·업그레이드 절차는 app/static/vendor/README.md 참고. #}
     <script src="{{ url_for('static', path='/vendor/htmx.min.js') }}"></script>
+    <script>
+        // head에 두는 이유: boost는 body만 갈아끼우므로 body 안의 인라인 스크립트는
+        // 이동할 때마다 다시 실행돼 리스너가 쌓인다. head는 교체되지 않아 한 번만
+        // 실행된다. htmx 이벤트는 document까지 버블링하므로 여기서 받을 수 있다.
+        //
+        // htmx는 기본적으로 non-2xx 응답을 swap하지 않는다. 이 서비스는 로그인
+        // 실패를 401 + login.html, 회원가입 실패를 400 + signup.html, 예외를
+        // 500 + error.html로 돌려주므로, 이 처리가 없으면 boost가 켜진 순간
+        // 로그인 실패 시 화면이 아무 반응도 하지 않는다.
+        document.addEventListener("htmx:beforeSwap", function (e) {
+            if (e.detail.xhr.status >= 400) {
+                e.detail.shouldSwap = true;
+                e.detail.isError = false;
+            }
+        });
+    </script>
     {% block head_extra %}{% endblock %}
 </head>
 {# hx-boost: 링크·폼을 AJAX로 가로채 body만 교체한다. 전체 리로드가 사라져
@@ -47,20 +63,10 @@
         {% block content %}{% endblock %}
     </main>
     <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
+        {# 연도는 서버에서 렌더한다. document.write로 찍으면 boost가 body를 교체한
+           뒤 실행돼 문서 전체를 덮어쓴다(페이지에 연도만 남는다). #}
+        &copy; {{ current_year() }} EDUTECH
     </footer>
-    <script>
-        // htmx는 기본적으로 non-2xx 응답을 swap하지 않는다. 이 서비스는 로그인
-        // 실패를 401 + login.html, 회원가입 실패를 400 + signup.html, 예외를
-        // 500 + error.html로 돌려주므로, 이 처리가 없으면 boost가 켜진 순간
-        // 로그인 실패 시 화면이 아무 반응도 하지 않는다.
-        document.body.addEventListener("htmx:beforeSwap", function (e) {
-            if (e.detail.xhr.status >= 400) {
-                e.detail.shouldSwap = true;
-                e.detail.isError = false;
-            }
-        });
-    </script>
     {% block page_scripts %}{% endblock %}
 </body>
 </html>

@@ -33,38 +33,52 @@
 {% block page_scripts %}
         <script>
             (function () {
-                var form = document.querySelector(".info-form");
-                // 비로그인 화면에는 생성 폼이 없다.
-                if (!form) { return; }
-                var button = form.querySelector("button[type=submit]");
-                var generating = false;
+                // boost는 body만 갈아끼우므로 이 스크립트는 "/"로 올 때마다 다시
+                // 실행된다. 리스너를 그때마다 걸면 쌓이므로 한 번만 등록하고,
+                // 상태는 클로저에 담지 않고 매번 DOM에서 읽는다(이전 페이지의
+                // form 참조가 남아 어긋나는 것을 막는다).
+                if (window.__edutechGenerationWatcher) { return; }
+                window.__edutechGenerationWatcher = true;
 
-                // 생성은 POST 응답이 아니라 폴링이 끝날 때 완료된다. 그동안
-                // 버튼을 열어두면 두 번째 job이 생겨 생성 횟수만 더 쓴다.
-                function setGenerating(value) {
-                    generating = value;
-                    if (button) { button.disabled = value; }
+                function form() {
+                    return document.querySelector(".info-form");
+                }
+                function progressPanel() {
+                    return document.getElementById("gen-progress");
+                }
+                // 생성은 POST 응답이 아니라 폴링이 끝날 때 완료된다. POST가 나가는
+                // 동안(htmx-request)과 진행 패널이 떠 있는 동안이 모두 생성 중이다.
+                function generating() {
+                    var f = form();
+                    if (!f) { return false; }
+                    return f.classList.contains("htmx-request") || progressPanel() !== null;
+                }
+                function syncButton() {
+                    var f = form();
+                    if (!f) { return; }
+                    var button = f.querySelector("button[type=submit]");
+                    // 버튼을 열어두면 두 번째 job이 생겨 생성 횟수만 더 쓴다.
+                    if (button) { button.disabled = generating(); }
                 }
 
-                form.addEventListener("htmx:beforeRequest", function () {
-                    setGenerating(true);
+                // beforeRequest 시점에 htmx-request 클래스가 이미 붙어 있는지는
+                // 보장되지 않으므로, 폼이 낸 요청이면 클래스와 무관하게 잠근다.
+                document.addEventListener("htmx:beforeRequest", function (e) {
+                    var f = form();
+                    if (!f || !f.contains(e.target)) { return; }
+                    var button = f.querySelector("button[type=submit]");
+                    if (button) { button.disabled = true; }
                 });
-                // POST 자체가 실패하면 진행 패널을 받지 못하므로 여기서 잠금을 푼다.
-                form.addEventListener("htmx:afterRequest", function (e) {
-                    if (!e.detail.successful) { setGenerating(false); }
-                });
-                // 진행 패널이 결과·오류 조각으로 교체되면 생성이 끝난 것이다.
-                document.body.addEventListener("htmx:afterSwap", function () {
-                    if (generating && !document.getElementById("gen-progress")) {
-                        setGenerating(false);
-                    }
-                });
+                // afterRequest는 swap 이후에 난다 — 진행 패널이 들어왔으면 잠금 유지,
+                // POST 자체가 실패해 아무것도 안 들어왔으면 여기서 풀린다.
+                document.addEventListener("htmx:afterRequest", syncButton);
+                document.addEventListener("htmx:afterSwap", syncButton);
 
                 // 커스텀 문구는 최신 브라우저(Chrome/Firefox 등)가 무시하고 자체
                 // 고정 문구만 보여준다 — beforeunload 스펙상 그렇게 정해져 있어
                 // 우회 불가. e.returnValue를 세팅하는 것만으로 확인창 자체는 뜬다.
                 window.addEventListener("beforeunload", function (e) {
-                    if (generating) {
+                    if (generating()) {
                         e.preventDefault();
                         e.returnValue = "";
                     }
