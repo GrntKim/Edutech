@@ -210,13 +210,19 @@ def _add_announce_box(cell: _Cell, teacher_text: str, student_text: str, width: 
 
 
 _NUMBERED_LINE = re.compile(r"^\d+\.")
+_TEACHER_SPEECH_LINE = re.compile(r"^T\d*\s*:\s")  # "T : "/"T1 : " 등 교사 발화 줄
 
 
 def _add_procedure_box(cell: _Cell, teacher_text: str, width: Emu) -> None:
     """"활동1"/"활동2" 행의 teacher 셀을 채운다: 제목 줄은 굵게. 본문이 번호 절차
     (1. 2. 3. ...)면 게임·규칙 안내로 보고 테두리 박스로 감싸 눈에 띄게 하고, "-"로
     시작하는 서술형 문장(+ 중간중간 "T : " 발문 여러 개)이면 일반 활동이므로 박스 없이
-    그대로 문단으로 나열한다(prompts.py 규칙 4)."""
+    그대로 문단으로 나열한다(prompts.py 규칙 4).
+
+    prompts.py 규칙상 번호 절차에는 "T : " 발화가 섞이면 안 되지만, 모델이 이를 지키지
+    않고 절차 뒤에 "T : " 발문을 덧붙이는 경우가 실제로 있다. 교사의 실제 발화는 절차
+    안내와 성격이 다르므로 어떤 경우에도 네모 박스 안에 들어가면 안 된다 — 번호 절차
+    줄만 박스에 넣고, "T : " 줄은 박스 밖에 별도 문단으로 둔다."""
     heading, body = _split_heading_body(teacher_text)
     body_lines = body.split("\n") if body else []
 
@@ -229,7 +235,11 @@ def _add_procedure_box(cell: _Cell, teacher_text: str, width: Emu) -> None:
 
     is_numbered_procedure = bool(_NUMBERED_LINE.match(body_lines[0]))
     if is_numbered_procedure:
-        _add_boxed_table(cell, body, width)
+        procedure_lines = [line for line in body_lines if not _TEACHER_SPEECH_LINE.match(line)]
+        speech_lines = [line for line in body_lines if _TEACHER_SPEECH_LINE.match(line)]
+        _add_boxed_table(cell, "\n".join(procedure_lines), width)
+        for line in speech_lines:
+            cell.add_paragraph(line)
     else:
         for line in body_lines:
             cell.add_paragraph(line)
