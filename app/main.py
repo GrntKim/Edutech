@@ -5,17 +5,22 @@
 
 import logging
 import re
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import quote
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import Cookie, Depends, FastAPI, Form, HTTPException, Request
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.agents.lesson_generate import LessonOutput, render_lesson_docx
-from app.agents.orchestrate import run_pipeline
+from app.agents.orchestrate import MAX_RETRIES, STAGES, run_pipeline
 from app.lib import auth, db
 from app.lib.types import (
     ConceptInput,
@@ -63,6 +68,48 @@ def status_label(value: str) -> str:
 
 
 templates.env.filters["status_label"] = status_label
+
+# 저장은 UTC, 표시는 KST.
+#
+# DB의 시각 컬럼은 timestamptz이고 기본값이 now()라 항상 UTC로 들어간다. 그건
+# 그대로 둔다 — 저장 시점을 지역 시간으로 바꾸면 나중에 지역이 늘거나 서머타임을
+# 쓰는 지역이 끼면 과거 기록의 의미가 흔들린다. 대신 세션 타임존을 지정하지 않아
+# psycopg가 UTC aware datetime을 돌려주고, 템플릿이 그 값을 그대로 찍고 있었다.
+# 화면에는 9시간 뒤처진 시각이 떴다(24시간제라 3시간 차이로 보였다).
+#
+# 변환은 표시 직전 한 곳에서만 한다.
+KST = ZoneInfo("Asia/Seoul")
+
+
+def to_kst(value: datetime, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    """UTC로 저장된 시각을 한국 시간 문자열로 바꾼다.
+
+    tz 정보가 없는 값이 섞여 들어오면 UTC로 간주한다 — DDL이 timestamptz가
+    아니게 만들어지는 사고에 대한 방어이며, auth._is_expired와 같은 규약이다.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(KST).strftime(fmt)
+
+
+templates.env.filters["kst"] = to_kst
+
+
+def current_year() -> int:
+    """푸터의 저작권 연도.
+
+    예전에는 템플릿에서 document.write(new Date().getFullYear())로 찍었는데,
+    hx-boost가 body를 교체하면 그 스크립트가 문서 로드 이후에 실행된다 —
+    그 시점의 document.write는 문서 전체를 덮어써서 페이지가 연도 네 글자만
+    남는다. 서버에서 렌더해 스크립트 자체를 없앤다.
+
+    Cloud Run 컨테이너의 로컬 시간은 UTC라 naive now()를 쓰면 12월 31일
+    21시(KST)부터 세 시간 동안 이전 연도가 뜬다 — 표시용 시각은 전부 KST로 맞춘다.
+    """
+    return datetime.now(KST).year
+
+
+templates.env.globals["current_year"] = current_year
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -144,16 +191,215 @@ def _docx_response(docx_bytes: bytes, raw_title: str) -> Response:
     )
 
 
+@dataclass
+class _GenerationJob:
+    """진행 중인 교안 생성 하나의 상태.
+
+    파이프라인이 백그라운드에서 도는 동안 화면이 1초마다 폴링해 이 값을 읽는다.
+    """
+
+    user: User
+    concept: str
+    grade: int
+    started_at: float = field(default_factory=time.monotonic)
+    stage: str = STAGES[0][0]
+    retry_count: int = 0
+    # 진행률(%)과 "직전 폴링에 실제로 내보낸 진행률". 둘 다 필요한 이유는
+    # _progress_fragment 주석 참고.
+    progress: int = 0
+    reported_progress: int = 0
+    done: bool = False
+    result: PipelineResult | None = None
+    request_id: UUID | None = None
+
+
+# 진행 상태는 인스턴스 메모리에만 있다. 인스턴스가 둘 이상이면 폴링 요청이
+# 다른 인스턴스로 가 job을 못 찾으므로, Cloud Run은 --max-instances=1로
+# 배포해야 한다(session affinity는 best-effort라 대안이 못 된다).
+# 스케일아웃이 필요해지면 이 상태를 Cloud SQL로 옮기는 것이 정공법이다.
+_generation_jobs: dict[str, _GenerationJob] = {}
+_generation_jobs_lock = threading.Lock()
+
+# 폴링이 끝난 job을 남겨두면 메모리가 계속 는다. 결과를 이미 받아간 뒤에도
+# 잠깐은 남겨둬야 재요청(스왑 직전 한 번 더 나가는 폴링 등)이 404가 나지 않는다.
+GENERATION_JOB_TTL_SECONDS = 1800
+
+# 이 시간을 넘겨도 안 끝나면 폴링을 멈춘다. 파이프라인 자체는 계속 돌아
+# 기록은 마이페이지에 남는다.
+GENERATION_TIMEOUT_SECONDS = 600
+
+# 마지막 단계(검증)에서 100%를 채우면 결과가 아직 없는데 다 끝난 것처럼 보인다.
+# 100%는 결과 조각이 실제로 화면에 들어올 때만 의미가 있으므로 여기서 멈춘다.
+GENERATION_PROGRESS_MAX = 95
+
+
+def _stage_progress(stage: str) -> int:
+    """단계 하나를 지날 때마다 균등하게 채운다(5단계 = 20%씩).
+
+    시간이 아니라 단계 수 기준이다 — 실제로는 C(교안 작성)가 가장 길어 80%에
+    오래 머문다. 1% 단위로 시간을 추적하는 척하지 않기 위한 선택이고, 단계
+    전환 자체는 파이프라인이 실제로 보낸 신호라 거짓이 아니다. 단계별 실측
+    소요 시간이 쌓이면 가중치를 다르게 주면 된다.
+    """
+    codes = [code for code, _label in STAGES]
+    if stage not in codes:
+        return 0
+    return min((codes.index(stage) + 1) * 100 // len(codes), GENERATION_PROGRESS_MAX)
+
+MSG_GENERATION_FAILED = "교안 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."
+MSG_GENERATION_TIMEOUT = (
+    "생성이 예상보다 오래 걸리고 있습니다. 완료되면 마이페이지에서 확인할 수 있습니다."
+)
+
+
+def _purge_expired_jobs() -> None:
+    """TTL이 지난 job을 정리한다. 호출부가 락을 잡은 상태로 부른다."""
+    now = time.monotonic()
+    for job_id in [
+        key
+        for key, job in _generation_jobs.items()
+        if now - job.started_at > GENERATION_JOB_TTL_SECONDS
+    ]:
+        del _generation_jobs[job_id]
+
+
+def _run_generation(job_id: str) -> None:
+    """백그라운드에서 파이프라인을 돌리고 결과를 job에 넣는다.
+
+    응답을 이미 돌려보낸 뒤 실행되므로, 여기서 예외가 새어나가도 사용자에게
+    전달할 응답이 없다. 모든 실패를 job.result로 변환해 폴링 쪽에서 보여준다.
+    """
+    with _generation_jobs_lock:
+        job = _generation_jobs.get(job_id)
+    if job is None:
+        return
+
+    def on_stage(stage: str, phase: str, retry_count: int) -> None:
+        # "end"는 무시한다 — 다음 단계의 "start"가 곧바로 뒤따르므로, 그 사이에
+        # 잠깐 "아무 단계도 아님" 상태를 만들 이유가 없다.
+        if phase != "start":
+            return
+        with _generation_jobs_lock:
+            current = _generation_jobs.get(job_id)
+            if current is None:
+                return
+            current.stage = stage
+            current.retry_count = retry_count
+            # 검증에 걸려 교안 작성으로 되돌아가도 막대는 뒤로 가지 않는다.
+            # 뒤로 가는 진행 막대는 없는 것보다 나쁘다 — 재시도 중이라는 사실은
+            # 진행 패널의 안내 문구가 따로 알린다.
+            current.progress = max(current.progress, _stage_progress(stage))
+
+    try:
+        result = run_pipeline(
+            ConceptInput(
+                raw_concept_name=job.concept,
+                target_grade=job.grade,
+                subject_hint=None,
+            ),
+            on_stage=on_stage,
+        )
+    except Exception:
+        logger.exception("generation_failed")
+        # 예외로 죽어도 여기까지 온 Gemini 호출 비용은 이미 발생했다 — 카운트하고 넘긴다.
+        _record_attempt(job.user, job.concept, job.grade, None)
+        _finish_generation(job_id, None, None)
+        return
+
+    if result.status is PipelineStatus.AMBIGUOUS_INPUT:
+        # A1이 LLM 호출 전에 규칙만으로 걸러낸 경로라 API 비용이 0이다("AI",
+        # "인공지능", 빈 값 등 — 처음 쓰는 교사가 가장 먼저 칠 입력들이 여기
+        # 걸린다). 반복해도 쿼터를 안 쓰므로 레이트리밋에서 제외한다.
+        # 나머지 경로는 Gemini를 이미 호출했으므로 현행대로 카운트한다.
+        saved = None
+    else:
+        saved = _record_attempt(job.user, job.concept, job.grade, result)
+
+    # 저장에 실패했으면 다운로드할 근거(lesson_requests 행)가 없으므로 버튼을 숨긴다.
+    request_id = saved.id if saved is not None and saved.lesson_output else None
+    _finish_generation(job_id, result, request_id)
+
+
+def _finish_generation(
+    job_id: str, result: PipelineResult | None, request_id: UUID | None
+) -> None:
+    with _generation_jobs_lock:
+        job = _generation_jobs.get(job_id)
+        if job is None:
+            return
+        job.result = result
+        job.request_id = request_id
+        job.done = True
+
+
+def _progress_fragment(request: Request, job_id: str, job: _GenerationJob) -> Response:
+    """진행 패널 조각. 자기 자신을 교체하며 계속 폴링한다.
+
+    직전에 내보낸 진행률(previous_progress)을 함께 넘긴다. 패널은 폴링마다
+    outerHTML로 통째 교체돼 매번 새 DOM 노드가 되므로, CSS transition은 걸리지
+    않고 막대가 그냥 튄다. 시작값을 알려주면 keyframe으로 그 값에서 현재 값까지
+    애니메이션할 수 있다.
+    """
+    stage_codes = [code for code, _label in STAGES]
+    with _generation_jobs_lock:
+        current_index = stage_codes.index(job.stage) if job.stage in stage_codes else 0
+        progress = job.progress
+        previous_progress = job.reported_progress
+        job.reported_progress = progress
+        retry_count = job.retry_count
+
+    return templates.TemplateResponse(
+        request,
+        "_generate_progress.html",
+        {
+            "job_id": job_id,
+            "stages": STAGES,
+            "current_index": current_index,
+            "progress": progress,
+            "previous_progress": previous_progress,
+            "retry_count": retry_count,
+            "max_retries": MAX_RETRIES,
+        },
+    )
+
+
+def _result_fragment(
+    request: Request,
+    user: User,
+    result: PipelineResult | None,
+    request_id: UUID | None,
+    warning: str | None = None,
+) -> Response:
+    """결과 조각. result가 None이면 lesson 없이 안내 문구만 나온다."""
+    return templates.TemplateResponse(
+        request,
+        "result.html",
+        {
+            "user": user,
+            "lesson": result.lesson_plan if result is not None else None,
+            "warning": warning if result is None else result.warning,
+            "request_id": request_id,
+            # 방금 기록한 행까지 반영돼야 하므로 사전 검사 때 값을 재사용하지 않고 다시 센다.
+            "rate_status": auth.check_rate_limit(user),
+        },
+    )
+
+
 @app.post("/generate", response_class=HTMLResponse)
 def generate(
     request: Request,
+    background_tasks: BackgroundTasks,
     concept: str = Form(...),
     grade: int = Form(...),
     user: User = Depends(auth.get_current_user),
 ):
-    """폼 제출을 받아 파이프라인을 실행하고 결과 조각을 반환한다.
+    """폼 제출을 받아 파이프라인을 시작하고 진행 패널 조각을 즉시 반환한다.
 
-    htmx가 #result에 삽입하므로 전체 문서가 아니라 조각(result.html)을 돌려준다.
+    파이프라인은 언어모델 호출이 여러 번 들어가 수십 초 이상 걸린다. 응답을
+    붙잡고 있으면 그동안 화면에 보여줄 수 있는 것이 고정 문구뿐이라, 실행은
+    백그라운드로 넘기고 화면은 /generate/progress/{job_id}를 폴링한다.
+
+    htmx가 #result에 삽입하므로 전체 문서가 아니라 조각을 돌려준다.
     subject_hint는 1단계에서 UI에 노출하지 않으며, 생략이 아니라 명시적으로
     None을 전달한다(팀 합의 2026-08-04, REQ-006 SITE-001).
 
@@ -173,46 +419,52 @@ def generate(
             ),
         )
 
-    try:
-        result = run_pipeline(
-            ConceptInput(
-                raw_concept_name=concept,
-                target_grade=grade,
-                subject_hint=None,
-            )
-        )
-    except Exception:
-        # 예외로 죽어도 여기까지 온 Gemini 호출 비용은 이미 발생했다 — 카운트하고 넘긴다.
-        _record_attempt(user, concept, grade, None)
-        raise
+    job_id = uuid4().hex
+    job = _GenerationJob(user=user, concept=concept, grade=grade)
+    with _generation_jobs_lock:
+        _purge_expired_jobs()
+        _generation_jobs[job_id] = job
 
-    if result.status is PipelineStatus.AMBIGUOUS_INPUT:
-        # A1이 LLM 호출 전에 규칙만으로 걸러낸 경로라 API 비용이 0이다("AI",
-        # "인공지능", 빈 값 등 — 처음 쓰는 교사가 가장 먼저 칠 입력들이 여기
-        # 걸린다). 반복해도 쿼터를 안 쓰므로 레이트리밋에서 제외한다.
-        # 나머지 경로는 Gemini를 이미 호출했으므로 현행대로 카운트한다.
-        saved = None
-    else:
-        saved = _record_attempt(user, concept, grade, result)
+    background_tasks.add_task(_run_generation, job_id)
+    return _progress_fragment(request, job_id, job)
 
-    return templates.TemplateResponse(
-        request,
-        "result.html",
-        {
-            "user": user,
-            "lesson": result.lesson_plan,
-            "warning": result.warning,
-            # 저장에 실패했으면 다운로드할 근거(lesson_requests 행)가 없으므로 버튼을 숨긴다.
-            "request_id": saved.id if saved is not None and saved.lesson_output else None,
-            # 방금 기록한 행까지 반영된 값이어야 하므로 위 rate_status를 재사용하지 않고 다시 센다.
-            "rate_status": auth.check_rate_limit(user),
-        },
-    )
+
+@app.get("/generate/progress/{job_id}", response_class=HTMLResponse)
+def generate_progress(
+    request: Request, job_id: str, user: User = Depends(auth.get_current_user)
+):
+    """진행 중이면 진행 패널을, 끝났으면 결과 조각을 돌려준다.
+
+    진행 패널은 자기 자신을 outerHTML로 교체하며 폴링하므로, 폴링 속성이 없는
+    결과 조각으로 바뀌는 순간 폴링이 저절로 멈춘다.
+    """
+    with _generation_jobs_lock:
+        job = _generation_jobs.get(job_id)
+
+    # 소유자만 볼 수 있다. 남의 job_id를 찍어도 존재 여부조차 알려주지 않는다.
+    if job is None or job.user.id != user.id:
+        raise HTTPException(status_code=404, detail="생성 요청을 찾을 수 없습니다.")
+
+    if job.done:
+        if job.result is None:
+            return _result_fragment(request, user, None, None, MSG_GENERATION_FAILED)
+        return _result_fragment(request, user, job.result, job.request_id)
+
+    if time.monotonic() - job.started_at > GENERATION_TIMEOUT_SECONDS:
+        # 파이프라인은 계속 돌아 기록은 남는다. 화면의 폴링만 멈춘다.
+        logger.warning(f"generation_poll_timeout job_id={job_id}")
+        return _result_fragment(request, user, None, None, MSG_GENERATION_TIMEOUT)
+
+    return _progress_fragment(request, job_id, job)
 
 
 @app.get("/signup", response_class=HTMLResponse)
-def signup_form(request: Request):
-    return templates.TemplateResponse(request, "signup.html", {"error": None})
+def signup_form(
+    request: Request, current_user: User | None = Depends(auth.get_optional_user)
+):
+    return templates.TemplateResponse(
+        request, "signup.html", {"error": None, "user": current_user}
+    )
 
 
 @app.post("/signup", response_class=HTMLResponse)
@@ -221,12 +473,13 @@ def signup(
     email: str = Form(...),
     password: str = Form(...),
     name: str = Form(...),
+    current_user: User | None = Depends(auth.get_optional_user),
 ):
     if len(password) < 8:
         return templates.TemplateResponse(
             request,
             "signup.html",
-            {"error": "비밀번호는 8자 이상이어야 합니다."},
+            {"error": "비밀번호는 8자 이상이어야 합니다.", "user": current_user},
             status_code=400,
         )
 
@@ -241,7 +494,7 @@ def signup(
         return templates.TemplateResponse(
             request,
             "signup.html",
-            {"error": "이미 가입된 이메일입니다."},
+            {"error": "이미 가입된 이메일입니다.", "user": current_user},
             status_code=400,
         )
 
@@ -251,18 +504,27 @@ def signup(
 
 
 @app.get("/login", response_class=HTMLResponse)
-def login_form(request: Request):
-    return templates.TemplateResponse(request, "login.html", {"error": None})
+def login_form(
+    request: Request, current_user: User | None = Depends(auth.get_optional_user)
+):
+    return templates.TemplateResponse(
+        request, "login.html", {"error": None, "user": current_user}
+    )
 
 
 @app.post("/login", response_class=HTMLResponse)
-def login(request: Request, email: str = Form(...), password: str = Form(...)):
+def login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    current_user: User | None = Depends(auth.get_optional_user),
+):
     user = db.get_user_by_email(email.strip().lower())
     if user is None or not auth.verify_password(password, user.password_hash):
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "이메일 또는 비밀번호가 올바르지 않습니다."},
+            {"error": "이메일 또는 비밀번호가 올바르지 않습니다.", "user": current_user},
             status_code=401,
         )
 
@@ -359,7 +621,7 @@ def delete_lesson_request(request_id: UUID, user: User = Depends(auth.get_curren
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request, admin: User = Depends(auth.require_admin)):
-    return templates.TemplateResponse(request, "admin.html", {"admin": admin})
+    return templates.TemplateResponse(request, "admin.html", {"user": admin})
 
 
 def _parse_subject_query(value: str | None) -> Subject | None:
@@ -405,7 +667,7 @@ def admin_chunks(
     )
 
     context = {
-        "admin": admin,
+        "user": admin,
         "items": items,
         "q": q or "",
         "subject": subject or "",
@@ -425,7 +687,7 @@ def admin_chunk_edit_form(
     if chunk is None:
         raise HTTPException(status_code=404, detail="성취기준을 찾을 수 없습니다.")
     return templates.TemplateResponse(
-        request, "admin_chunk_edit.html", {"admin": admin, "chunk": chunk, "saved": False}
+        request, "admin_chunk_edit.html", {"user": admin, "chunk": chunk, "saved": False}
     )
 
 
@@ -456,12 +718,29 @@ def admin_chunk_update(
     if updated is None:
         raise HTTPException(status_code=404, detail="성취기준을 찾을 수 없습니다.")
     return templates.TemplateResponse(
-        request, "admin_chunk_edit.html", {"admin": admin, "chunk": updated, "saved": True}
+        request, "admin_chunk_edit.html", {"user": admin, "chunk": updated, "saved": True}
     )
 
 
 def _is_htmx_request(request: Request) -> bool:
     return request.headers.get("hx-request") == "true"
+
+
+def _user_from_request(request: Request) -> User | None:
+    """예외 핸들러용 로그인 상태 조회.
+
+    핸들러는 의존성 주입을 못 쓰므로 쿠키에서 직접 세션을 찾는다. base.html의
+    네비게이션이 user 하나만 보기 때문에, 이 값이 없으면 로그인한 사용자가
+    에러 페이지에서만 비로그인 상태로 보인다.
+
+    조회 실패는 삼킨다 — DB가 죽어서 500이 난 상황에서 에러 페이지가 또
+    DB를 찔러 죽으면 사용자에게 아무것도 못 보여준다.
+    """
+    try:
+        return auth.get_optional_user(request.cookies.get(auth.SESSION_COOKIE_NAME))
+    except Exception:
+        logger.exception("error_page_user_lookup_failed")
+        return None
 
 
 @app.exception_handler(HTTPException)
@@ -475,7 +754,10 @@ def handle_http_exception(request: Request, exc: HTTPException) -> Response:
     if _is_htmx_request(request):
         return HTMLResponse(f'<div class="notice">{exc.detail}</div>', status_code=exc.status_code)
     return templates.TemplateResponse(
-        request, "error.html", {"message": exc.detail}, status_code=exc.status_code
+        request,
+        "error.html",
+        {"message": exc.detail, "user": _user_from_request(request)},
+        status_code=exc.status_code,
     )
 
 
@@ -488,4 +770,9 @@ def handle_error(request: Request, exc: Exception) -> Response:
     message = "처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
     if _is_htmx_request(request):
         return HTMLResponse(f'<div class="notice">{message}</div>', status_code=500)
-    return templates.TemplateResponse(request, "error.html", {"message": message}, status_code=500)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        {"message": message, "user": _user_from_request(request)},
+        status_code=500,
+    )

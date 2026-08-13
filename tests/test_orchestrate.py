@@ -215,6 +215,71 @@ def test_normal_flow_returns_pipeline_result(monkeypatch):
     assert result.validation.passed is True
 
 
+def test_on_stage_reports_every_stage_in_order(monkeypatch):
+    """진행 표시(E)가 쓰는 콜백 — 단계 순서와 재시도 횟수를 그대로 전달한다."""
+    concept_result = _make_concept_result()
+    validations = [ValidationResult(passed=False, violations=["금지어: 레이블"]), ValidationResult(passed=True)]
+
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda user_input, context: concept_result)
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda query: _make_search_results())
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: _make_mapping())
+    monkeypatch.setattr(
+        orchestrate,
+        "generate_lesson",
+        lambda m, ctx, retry_feedback=None, caution_terms=None: {"title": "교안"},
+    )
+    monkeypatch.setattr(
+        orchestrate,
+        "validate",
+        lambda lesson_plan, ctx, *, subject, caution_terms, concept_name: validations.pop(0),
+    )
+
+    events = []
+    orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None),
+        on_stage=lambda stage, phase, retry_count: events.append((stage, phase, retry_count)),
+    )
+
+    starts = [(stage, retry) for stage, phase, retry in events if phase == "start"]
+    assert starts == [
+        ("A1", 0), ("A2", 0), ("B", 0),
+        ("C", 0), ("D", 0),
+        # 검증 실패 → 교안 작성으로 되돌아간다. retry_count가 올라가야 화면이
+        # "재시도 중"을 보여줄 수 있다.
+        ("C", 1), ("D", 1),
+    ]
+    # STAGES는 화면 표시용 목록 — 실제 호출 순서와 어긋나면 안 된다.
+    assert [code for code, _label in orchestrate.STAGES] == ["A1", "A2", "B", "C", "D"]
+
+
+def test_on_stage_failure_does_not_break_pipeline(monkeypatch):
+    """콜백은 화면 표시용 부가 기능이다 — 터져도 교안을 잃으면 안 된다."""
+    monkeypatch.setattr(orchestrate, "collect_concept", lambda user_input, context: _make_concept_result())
+    monkeypatch.setattr(orchestrate, "search_curriculum", lambda query: _make_search_results())
+    monkeypatch.setattr(orchestrate, "map_concept", lambda c, r, ctx: _make_mapping())
+    monkeypatch.setattr(
+        orchestrate,
+        "generate_lesson",
+        lambda m, ctx, retry_feedback=None, caution_terms=None: {"title": "교안"},
+    )
+    monkeypatch.setattr(
+        orchestrate,
+        "validate",
+        lambda lesson_plan, ctx, *, subject, caution_terms, concept_name: ValidationResult(passed=True),
+    )
+
+    def boom(stage, phase, retry_count):
+        raise RuntimeError("진행 표시 갱신 실패")
+
+    result = orchestrate.run_pipeline(
+        ConceptInput(raw_concept_name="분류", target_grade=4, subject_hint=None),
+        on_stage=boom,
+    )
+
+    assert result.status is PipelineStatus.SUCCESS
+    assert result.lesson_plan == {"title": "교안"}
+
+
 def test_a1_unsupported_concept_short_circuits(monkeypatch):
     """A1이 unsupported_concept 반환 → 이후 단계 호출 안 되고 정상 종료, 안내 문구 포함."""
     calls = []

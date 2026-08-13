@@ -1,21 +1,6 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>오류 - Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <header class="site-header">
-        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}오류 - Edutech{% endblock %}
+{% block content %}
         <div class="notice">{{ message }}</div>
         <p><a href="/">처음으로</a></p>
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}

@@ -1,34 +1,13 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-</head>
-<body>
-    <header class="site-header">
-        <span>EDUTECH - PROTOTYPE</span>
-        <nav class="site-nav">
-            {% if user %}
-                <span>{{ user.name }}님{% if user.role == "admin" %} (admin){% endif %}</span>
-                <a href="/mypage">마이페이지</a>
-                {% if user.role == "admin" %}<a href="/admin">관리자</a>{% endif %}
-                <form method="post" action="/logout" style="display:inline">
-                    <button type="submit">로그아웃</button>
-                </form>
-            {% else %}
-                <a href="/login">로그인</a>
-                <a href="/signup">회원가입</a>
-            {% endif %}
-        </nav>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}Edutech{% endblock %}
+{% block content %}
         <p>교안 생성 시스템에 오신 것을 환영합니다.</p>
         {% if user %}
         {% include "_rate_limit.html" %}
-        <form hx-post="/generate" hx-target="#result" hx-indicator="#spinner" hx-request='{"timeout": 180000}' hx-sync="this:drop" hx-disabled-elt="find button" class="info-form">
+        {# POST는 job을 만들고 진행 패널만 돌려주므로 즉시 끝난다. 긴 타임아웃과
+           로딩 문구는 진행 패널이 대신하므로 더 이상 필요하지 않다. 생성 중
+           버튼 잠금은 아래 page_scripts가 폴링이 끝날 때까지 유지한다. #}
+        <form hx-post="/generate" hx-target="#result" hx-sync="this:drop" class="info-form">
             <div>
                 <label for="concept-input">개념</label>
                 <input type="text" id="concept-input" name="concept" required placeholder="개념을 입력하세요"/>
@@ -46,37 +25,64 @@
             </div>
             <button type="submit">생성하기</button>
         </form>
-        <div id="spinner" class="htmx-indicator">생성 중입니다... 최대 1분 정도 걸립니다.</div>
         <div id="result"></div>
+        {% else %}
+        <div class="notice">교안을 생성하려면 <a href="/login">로그인</a>이 필요합니다.</div>
+        {% endif %}
+{% endblock %}
+{% block page_scripts %}
         <script>
             (function () {
-                var form = document.querySelector(".info-form");
-                var generating = false;
+                // boost는 body만 갈아끼우므로 이 스크립트는 "/"로 올 때마다 다시
+                // 실행된다. 리스너를 그때마다 걸면 쌓이므로 한 번만 등록하고,
+                // 상태는 클로저에 담지 않고 매번 DOM에서 읽는다(이전 페이지의
+                // form 참조가 남아 어긋나는 것을 막는다).
+                if (window.__edutechGenerationWatcher) { return; }
+                window.__edutechGenerationWatcher = true;
 
-                form.addEventListener("htmx:beforeRequest", function () {
-                    generating = true;
+                function form() {
+                    return document.querySelector(".info-form");
+                }
+                function progressPanel() {
+                    return document.getElementById("gen-progress");
+                }
+                // 생성은 POST 응답이 아니라 폴링이 끝날 때 완료된다. POST가 나가는
+                // 동안(htmx-request)과 진행 패널이 떠 있는 동안이 모두 생성 중이다.
+                function generating() {
+                    var f = form();
+                    if (!f) { return false; }
+                    return f.classList.contains("htmx-request") || progressPanel() !== null;
+                }
+                function syncButton() {
+                    var f = form();
+                    if (!f) { return; }
+                    var button = f.querySelector("button[type=submit]");
+                    // 버튼을 열어두면 두 번째 job이 생겨 생성 횟수만 더 쓴다.
+                    if (button) { button.disabled = generating(); }
+                }
+
+                // beforeRequest 시점에 htmx-request 클래스가 이미 붙어 있는지는
+                // 보장되지 않으므로, 폼이 낸 요청이면 클래스와 무관하게 잠근다.
+                document.addEventListener("htmx:beforeRequest", function (e) {
+                    var f = form();
+                    if (!f || !f.contains(e.target)) { return; }
+                    var button = f.querySelector("button[type=submit]");
+                    if (button) { button.disabled = true; }
                 });
-                form.addEventListener("htmx:afterRequest", function () {
-                    generating = false;
-                });
+                // afterRequest는 swap 이후에 난다 — 진행 패널이 들어왔으면 잠금 유지,
+                // POST 자체가 실패해 아무것도 안 들어왔으면 여기서 풀린다.
+                document.addEventListener("htmx:afterRequest", syncButton);
+                document.addEventListener("htmx:afterSwap", syncButton);
 
                 // 커스텀 문구는 최신 브라우저(Chrome/Firefox 등)가 무시하고 자체
                 // 고정 문구만 보여준다 — beforeunload 스펙상 그렇게 정해져 있어
                 // 우회 불가. e.returnValue를 세팅하는 것만으로 확인창 자체는 뜬다.
                 window.addEventListener("beforeunload", function (e) {
-                    if (generating) {
+                    if (generating()) {
                         e.preventDefault();
                         e.returnValue = "";
                     }
                 });
             })();
         </script>
-        {% else %}
-        <div class="notice">교안을 생성하려면 <a href="/login">로그인</a>이 필요합니다.</div>
-        {% endif %}
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}

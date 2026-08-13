@@ -1,23 +1,7 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>성취기준 수정 - Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <header class="site-header">
-        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
-        <nav class="site-nav">
-            <span>{{ admin.name }}님 (admin)</span>
-            <a href="/admin/chunks">성취기준 목록</a>
-            <form method="post" action="/logout" style="display:inline">
-                <button type="submit">로그아웃</button>
-            </form>
-        </nav>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}성취기준 수정 - Edutech{% endblock %}
+{% block nav_extra %}<a href="/admin/chunks">성취기준 목록</a>{% endblock %}
+{% block content %}
         <h1>성취기준 수정 — {{ chunk.achievement_code }}</h1>
 
         {% if saved %}
@@ -57,9 +41,4 @@
             </div>
             <button type="submit">저장</button>
         </form>
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}

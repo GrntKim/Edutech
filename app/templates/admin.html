@@ -1,30 +1,8 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>관리자 - Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <header class="site-header">
-        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
-        <nav class="site-nav">
-            <span>{{ admin.name }}님 (admin)</span>
-            <a href="/mypage">마이페이지</a>
-            <form method="post" action="/logout" style="display:inline">
-                <button type="submit">로그아웃</button>
-            </form>
-        </nav>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}관리자 - Edutech{% endblock %}
+{% block content %}
         <h1>관리자 대시보드</h1>
         <ul>
             <li><a href="/admin/chunks">성취기준 관리</a></li>
         </ul>
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}
