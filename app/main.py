@@ -5,17 +5,20 @@
 
 import logging
 import re
+import threading
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import Cookie, Depends, FastAPI, Form, HTTPException, Request
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.agents.lesson_generate import LessonOutput, render_lesson_docx
-from app.agents.orchestrate import run_pipeline
+from app.agents.orchestrate import MAX_RETRIES, STAGES, run_pipeline
 from app.lib import auth, db
 from app.lib.types import (
     ConceptInput,
@@ -144,16 +147,175 @@ def _docx_response(docx_bytes: bytes, raw_title: str) -> Response:
     )
 
 
+@dataclass
+class _GenerationJob:
+    """진행 중인 교안 생성 하나의 상태.
+
+    파이프라인이 백그라운드에서 도는 동안 화면이 1초마다 폴링해 이 값을 읽는다.
+    """
+
+    user: User
+    concept: str
+    grade: int
+    started_at: float = field(default_factory=time.monotonic)
+    stage: str = STAGES[0][0]
+    retry_count: int = 0
+    done: bool = False
+    result: PipelineResult | None = None
+    request_id: UUID | None = None
+
+
+# 진행 상태는 인스턴스 메모리에만 있다. 인스턴스가 둘 이상이면 폴링 요청이
+# 다른 인스턴스로 가 job을 못 찾으므로, Cloud Run은 --max-instances=1로
+# 배포해야 한다(session affinity는 best-effort라 대안이 못 된다).
+# 스케일아웃이 필요해지면 이 상태를 Cloud SQL로 옮기는 것이 정공법이다.
+_generation_jobs: dict[str, _GenerationJob] = {}
+_generation_jobs_lock = threading.Lock()
+
+# 폴링이 끝난 job을 남겨두면 메모리가 계속 는다. 결과를 이미 받아간 뒤에도
+# 잠깐은 남겨둬야 재요청(스왑 직전 한 번 더 나가는 폴링 등)이 404가 나지 않는다.
+GENERATION_JOB_TTL_SECONDS = 1800
+
+# 이 시간을 넘겨도 안 끝나면 폴링을 멈춘다. 파이프라인 자체는 계속 돌아
+# 기록은 마이페이지에 남는다.
+GENERATION_TIMEOUT_SECONDS = 600
+
+MSG_GENERATION_FAILED = "교안 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."
+MSG_GENERATION_TIMEOUT = (
+    "생성이 예상보다 오래 걸리고 있습니다. 완료되면 마이페이지에서 확인할 수 있습니다."
+)
+
+
+def _purge_expired_jobs() -> None:
+    """TTL이 지난 job을 정리한다. 호출부가 락을 잡은 상태로 부른다."""
+    now = time.monotonic()
+    for job_id in [
+        key
+        for key, job in _generation_jobs.items()
+        if now - job.started_at > GENERATION_JOB_TTL_SECONDS
+    ]:
+        del _generation_jobs[job_id]
+
+
+def _run_generation(job_id: str) -> None:
+    """백그라운드에서 파이프라인을 돌리고 결과를 job에 넣는다.
+
+    응답을 이미 돌려보낸 뒤 실행되므로, 여기서 예외가 새어나가도 사용자에게
+    전달할 응답이 없다. 모든 실패를 job.result로 변환해 폴링 쪽에서 보여준다.
+    """
+    with _generation_jobs_lock:
+        job = _generation_jobs.get(job_id)
+    if job is None:
+        return
+
+    def on_stage(stage: str, phase: str, retry_count: int) -> None:
+        # "end"는 무시한다 — 다음 단계의 "start"가 곧바로 뒤따르므로, 그 사이에
+        # 잠깐 "아무 단계도 아님" 상태를 만들 이유가 없다.
+        if phase != "start":
+            return
+        with _generation_jobs_lock:
+            current = _generation_jobs.get(job_id)
+            if current is None:
+                return
+            current.stage = stage
+            current.retry_count = retry_count
+
+    try:
+        result = run_pipeline(
+            ConceptInput(
+                raw_concept_name=job.concept,
+                target_grade=job.grade,
+                subject_hint=None,
+            ),
+            on_stage=on_stage,
+        )
+    except Exception:
+        logger.exception("generation_failed")
+        # 예외로 죽어도 여기까지 온 Gemini 호출 비용은 이미 발생했다 — 카운트하고 넘긴다.
+        _record_attempt(job.user, job.concept, job.grade, None)
+        _finish_generation(job_id, None, None)
+        return
+
+    if result.status is PipelineStatus.AMBIGUOUS_INPUT:
+        # A1이 LLM 호출 전에 규칙만으로 걸러낸 경로라 API 비용이 0이다("AI",
+        # "인공지능", 빈 값 등 — 처음 쓰는 교사가 가장 먼저 칠 입력들이 여기
+        # 걸린다). 반복해도 쿼터를 안 쓰므로 레이트리밋에서 제외한다.
+        # 나머지 경로는 Gemini를 이미 호출했으므로 현행대로 카운트한다.
+        saved = None
+    else:
+        saved = _record_attempt(job.user, job.concept, job.grade, result)
+
+    # 저장에 실패했으면 다운로드할 근거(lesson_requests 행)가 없으므로 버튼을 숨긴다.
+    request_id = saved.id if saved is not None and saved.lesson_output else None
+    _finish_generation(job_id, result, request_id)
+
+
+def _finish_generation(
+    job_id: str, result: PipelineResult | None, request_id: UUID | None
+) -> None:
+    with _generation_jobs_lock:
+        job = _generation_jobs.get(job_id)
+        if job is None:
+            return
+        job.result = result
+        job.request_id = request_id
+        job.done = True
+
+
+def _progress_fragment(request: Request, job_id: str, job: _GenerationJob) -> Response:
+    """진행 패널 조각. 자기 자신을 교체하며 계속 폴링한다."""
+    stage_codes = [code for code, _ in STAGES]
+    current_index = stage_codes.index(job.stage) if job.stage in stage_codes else 0
+    return templates.TemplateResponse(
+        request,
+        "_generate_progress.html",
+        {
+            "job_id": job_id,
+            "stages": STAGES,
+            "current_index": current_index,
+            "retry_count": job.retry_count,
+            "max_retries": MAX_RETRIES,
+        },
+    )
+
+
+def _result_fragment(
+    request: Request,
+    user: User,
+    result: PipelineResult | None,
+    request_id: UUID | None,
+    warning: str | None = None,
+) -> Response:
+    """결과 조각. result가 None이면 lesson 없이 안내 문구만 나온다."""
+    return templates.TemplateResponse(
+        request,
+        "result.html",
+        {
+            "user": user,
+            "lesson": result.lesson_plan if result is not None else None,
+            "warning": warning if result is None else result.warning,
+            "request_id": request_id,
+            # 방금 기록한 행까지 반영돼야 하므로 사전 검사 때 값을 재사용하지 않고 다시 센다.
+            "rate_status": auth.check_rate_limit(user),
+        },
+    )
+
+
 @app.post("/generate", response_class=HTMLResponse)
 def generate(
     request: Request,
+    background_tasks: BackgroundTasks,
     concept: str = Form(...),
     grade: int = Form(...),
     user: User = Depends(auth.get_current_user),
 ):
-    """폼 제출을 받아 파이프라인을 실행하고 결과 조각을 반환한다.
+    """폼 제출을 받아 파이프라인을 시작하고 진행 패널 조각을 즉시 반환한다.
 
-    htmx가 #result에 삽입하므로 전체 문서가 아니라 조각(result.html)을 돌려준다.
+    파이프라인은 언어모델 호출이 여러 번 들어가 수십 초 이상 걸린다. 응답을
+    붙잡고 있으면 그동안 화면에 보여줄 수 있는 것이 고정 문구뿐이라, 실행은
+    백그라운드로 넘기고 화면은 /generate/progress/{job_id}를 폴링한다.
+
+    htmx가 #result에 삽입하므로 전체 문서가 아니라 조각을 돌려준다.
     subject_hint는 1단계에서 UI에 노출하지 않으며, 생략이 아니라 명시적으로
     None을 전달한다(팀 합의 2026-08-04, REQ-006 SITE-001).
 
@@ -173,41 +335,43 @@ def generate(
             ),
         )
 
-    try:
-        result = run_pipeline(
-            ConceptInput(
-                raw_concept_name=concept,
-                target_grade=grade,
-                subject_hint=None,
-            )
-        )
-    except Exception:
-        # 예외로 죽어도 여기까지 온 Gemini 호출 비용은 이미 발생했다 — 카운트하고 넘긴다.
-        _record_attempt(user, concept, grade, None)
-        raise
+    job_id = uuid4().hex
+    job = _GenerationJob(user=user, concept=concept, grade=grade)
+    with _generation_jobs_lock:
+        _purge_expired_jobs()
+        _generation_jobs[job_id] = job
 
-    if result.status is PipelineStatus.AMBIGUOUS_INPUT:
-        # A1이 LLM 호출 전에 규칙만으로 걸러낸 경로라 API 비용이 0이다("AI",
-        # "인공지능", 빈 값 등 — 처음 쓰는 교사가 가장 먼저 칠 입력들이 여기
-        # 걸린다). 반복해도 쿼터를 안 쓰므로 레이트리밋에서 제외한다.
-        # 나머지 경로는 Gemini를 이미 호출했으므로 현행대로 카운트한다.
-        saved = None
-    else:
-        saved = _record_attempt(user, concept, grade, result)
+    background_tasks.add_task(_run_generation, job_id)
+    return _progress_fragment(request, job_id, job)
 
-    return templates.TemplateResponse(
-        request,
-        "result.html",
-        {
-            "user": user,
-            "lesson": result.lesson_plan,
-            "warning": result.warning,
-            # 저장에 실패했으면 다운로드할 근거(lesson_requests 행)가 없으므로 버튼을 숨긴다.
-            "request_id": saved.id if saved is not None and saved.lesson_output else None,
-            # 방금 기록한 행까지 반영된 값이어야 하므로 위 rate_status를 재사용하지 않고 다시 센다.
-            "rate_status": auth.check_rate_limit(user),
-        },
-    )
+
+@app.get("/generate/progress/{job_id}", response_class=HTMLResponse)
+def generate_progress(
+    request: Request, job_id: str, user: User = Depends(auth.get_current_user)
+):
+    """진행 중이면 진행 패널을, 끝났으면 결과 조각을 돌려준다.
+
+    진행 패널은 자기 자신을 outerHTML로 교체하며 폴링하므로, 폴링 속성이 없는
+    결과 조각으로 바뀌는 순간 폴링이 저절로 멈춘다.
+    """
+    with _generation_jobs_lock:
+        job = _generation_jobs.get(job_id)
+
+    # 소유자만 볼 수 있다. 남의 job_id를 찍어도 존재 여부조차 알려주지 않는다.
+    if job is None or job.user.id != user.id:
+        raise HTTPException(status_code=404, detail="생성 요청을 찾을 수 없습니다.")
+
+    if job.done:
+        if job.result is None:
+            return _result_fragment(request, user, None, None, MSG_GENERATION_FAILED)
+        return _result_fragment(request, user, job.result, job.request_id)
+
+    if time.monotonic() - job.started_at > GENERATION_TIMEOUT_SECONDS:
+        # 파이프라인은 계속 돌아 기록은 남는다. 화면의 폴링만 멈춘다.
+        logger.warning(f"generation_poll_timeout job_id={job_id}")
+        return _result_fragment(request, user, None, None, MSG_GENERATION_TIMEOUT)
+
+    return _progress_fragment(request, job_id, job)
 
 
 @app.get("/signup", response_class=HTMLResponse)

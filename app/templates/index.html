@@ -4,7 +4,10 @@
         <p>교안 생성 시스템에 오신 것을 환영합니다.</p>
         {% if user %}
         {% include "_rate_limit.html" %}
-        <form hx-post="/generate" hx-target="#result" hx-indicator="#spinner" hx-request='{"timeout": 180000}' hx-sync="this:drop" hx-disabled-elt="find button" class="info-form">
+        {# POST는 job을 만들고 진행 패널만 돌려주므로 즉시 끝난다. 긴 타임아웃과
+           로딩 문구는 진행 패널이 대신하므로 더 이상 필요하지 않다. 생성 중
+           버튼 잠금은 아래 page_scripts가 폴링이 끝날 때까지 유지한다. #}
+        <form hx-post="/generate" hx-target="#result" hx-sync="this:drop" class="info-form">
             <div>
                 <label for="concept-input">개념</label>
                 <input type="text" id="concept-input" name="concept" required placeholder="개념을 입력하세요"/>
@@ -22,7 +25,6 @@
             </div>
             <button type="submit">생성하기</button>
         </form>
-        <div id="spinner" class="htmx-indicator">생성 중입니다... 최대 1분 정도 걸립니다.</div>
         <div id="result"></div>
         {% else %}
         <div class="notice">교안을 생성하려면 <a href="/login">로그인</a>이 필요합니다.</div>
@@ -34,13 +36,28 @@
                 var form = document.querySelector(".info-form");
                 // 비로그인 화면에는 생성 폼이 없다.
                 if (!form) { return; }
+                var button = form.querySelector("button[type=submit]");
                 var generating = false;
 
+                // 생성은 POST 응답이 아니라 폴링이 끝날 때 완료된다. 그동안
+                // 버튼을 열어두면 두 번째 job이 생겨 생성 횟수만 더 쓴다.
+                function setGenerating(value) {
+                    generating = value;
+                    if (button) { button.disabled = value; }
+                }
+
                 form.addEventListener("htmx:beforeRequest", function () {
-                    generating = true;
+                    setGenerating(true);
                 });
-                form.addEventListener("htmx:afterRequest", function () {
-                    generating = false;
+                // POST 자체가 실패하면 진행 패널을 받지 못하므로 여기서 잠금을 푼다.
+                form.addEventListener("htmx:afterRequest", function (e) {
+                    if (!e.detail.successful) { setGenerating(false); }
+                });
+                // 진행 패널이 결과·오류 조각으로 교체되면 생성이 끝난 것이다.
+                document.body.addEventListener("htmx:afterSwap", function () {
+                    if (generating && !document.getElementById("gen-progress")) {
+                        setGenerating(false);
+                    }
                 });
 
                 // 커스텀 문구는 최신 브라우저(Chrome/Firefox 등)가 무시하고 자체

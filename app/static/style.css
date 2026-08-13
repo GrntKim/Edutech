@@ -135,6 +135,53 @@ main {
     font-size: 0.9rem;
 }
 
+.gen-progress {
+    margin-top: 1rem;
+    padding: 1rem;
+    border: 1px solid #d6d6d6;
+    border-radius: 6px;
+    background: #f7f7f7;
+}
+
+.gen-progress-title {
+    font-weight: bold;
+}
+
+.gen-stages {
+    margin: 0.75rem 0 0 1.25rem;
+}
+
+.gen-stages li {
+    padding: 0.15rem 0;
+    color: #8a8a8a;
+}
+
+.gen-stages li.done {
+    color: #2f6f4f;
+}
+
+.gen-stages li.done::after {
+    content: " 완료";
+    font-size: 0.85em;
+}
+
+.gen-stages li.current {
+    color: #000;
+    font-weight: bold;
+}
+
+.gen-stages li.current::after {
+    content: " 진행 중...";
+    font-weight: normal;
+    font-size: 0.85em;
+}
+
+.gen-retry {
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: #8a5a00;
+}
+
 .download-btn {
     display: inline-block;
     margin-bottom: 1rem;

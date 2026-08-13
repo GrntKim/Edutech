@@ -6,6 +6,7 @@
 2. DOCX는 디스크를 거치지 않고 바이트로 내려간다(Cloud Run 다중 인스턴스 안전).
 """
 
+import re
 from datetime import datetime, timezone
 from urllib.parse import unquote
 from uuid import uuid4
@@ -90,6 +91,16 @@ def client(user):
     main.app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def clean_generation_jobs():
+    """job store는 모듈 전역이라 테스트 간에 남는다 — 매번 비우고 시작한다."""
+    with main._generation_jobs_lock:
+        main._generation_jobs.clear()
+    yield
+    with main._generation_jobs_lock:
+        main._generation_jobs.clear()
+
+
 @pytest.fixture
 def saved_rows(monkeypatch, user):
     """create_lesson_request 호출을 가로채 기록한다(= 레이트리밋 카운트 대상 행)."""
@@ -107,6 +118,24 @@ def saved_rows(monkeypatch, user):
     return rows
 
 
+def _generate(client, **form):
+    """POST /generate 후 폴링을 한 번 돌려 최종 조각까지 받아온다.
+
+    /generate는 job을 만들고 진행 패널만 즉시 돌려주므로, 결과는
+    /generate/progress/{job_id}에서 나온다. TestClient는 백그라운드 작업을
+    응답 반환 직후 동기로 실행하므로 POST가 돌아온 시점에 파이프라인은 이미
+    끝나 있다.
+
+    반환값은 (POST 응답, 최종 조각 응답)이다. POST가 실패하면 둘 다 그 응답.
+    """
+    post = client.post("/generate", data=form)
+    if post.status_code != 200:
+        return post, post
+    match = re.search(r"/generate/progress/([0-9a-f]+)", post.text)
+    assert match is not None, f"진행 패널에 job_id가 없다: {post.text[:200]}"
+    return post, client.get(f"/generate/progress/{match.group(1)}")
+
+
 # ---------- 파이프라인 실행 = 카운트 ----------
 
 
@@ -115,7 +144,7 @@ def test_generate_records_attempt_when_search_returns_nothing(client, monkeypatc
     monkeypatch.setattr(
         main,
         "run_pipeline",
-        lambda concept_input: PipelineResult(
+        lambda concept_input, on_stage=None: PipelineResult(
             lesson_plan={},
             validation=ValidationResult(passed=False),
             status=PipelineStatus.NO_CURRICULUM_MATCH,
@@ -123,7 +152,7 @@ def test_generate_records_attempt_when_search_returns_nothing(client, monkeypatc
         ),
     )
 
-    response = client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+    _post, response = _generate(client, concept="이미지 인식", grade=5)
 
     assert response.status_code == 200
     assert len(saved_rows) == 1
@@ -141,7 +170,7 @@ def test_generate_skips_count_when_input_ambiguous(client, monkeypatch, saved_ro
     monkeypatch.setattr(
         main,
         "run_pipeline",
-        lambda concept_input: PipelineResult(
+        lambda concept_input, on_stage=None: PipelineResult(
             lesson_plan={},
             validation=ValidationResult(passed=False),
             status=PipelineStatus.AMBIGUOUS_INPUT,
@@ -149,7 +178,7 @@ def test_generate_skips_count_when_input_ambiguous(client, monkeypatch, saved_ro
         ),
     )
 
-    response = client.post("/generate", data={"concept": "인공지능", "grade": 5})
+    _post, response = _generate(client, concept="인공지능", grade=5)
 
     assert response.status_code == 200
     assert "너무 넓어" in response.text
@@ -161,7 +190,7 @@ def test_generate_records_attempt_when_concept_unsupported(client, monkeypatch, 
     monkeypatch.setattr(
         main,
         "run_pipeline",
-        lambda concept_input: PipelineResult(
+        lambda concept_input, on_stage=None: PipelineResult(
             lesson_plan={},
             validation=ValidationResult(passed=False),
             status=PipelineStatus.UNSUPPORTED_CONCEPT,
@@ -169,7 +198,7 @@ def test_generate_records_attempt_when_concept_unsupported(client, monkeypatch, 
         ),
     )
 
-    client.post("/generate", data={"concept": "김치찌개", "grade": 3})
+    _generate(client, concept="김치찌개", grade=3)
 
     assert len(saved_rows) == 1
     assert saved_rows[0]["lesson_output"] == {}
@@ -179,14 +208,17 @@ def test_generate_records_attempt_when_concept_unsupported(client, monkeypatch, 
 def test_generate_records_attempt_when_pipeline_raises(client, monkeypatch, saved_rows):
     """파이프라인이 예외로 죽어도 이미 쓴 비용은 카운트한다(그리고 500은 그대로 난다)."""
 
-    def boom(concept_input):
+    def boom(concept_input, on_stage=None):
         raise RuntimeError("gemini down")
 
     monkeypatch.setattr(main, "run_pipeline", boom)
 
-    response = client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+    _post, response = _generate(client, concept="이미지 인식", grade=5)
 
-    assert response.status_code == 500
+    # 파이프라인이 백그라운드에서 도므로 500이 아니라, 폴링이 받아가는 안내
+    # 문구로 실패가 전달된다.
+    assert response.status_code == 200
+    assert main.MSG_GENERATION_FAILED in response.text
     assert len(saved_rows) == 1
     assert saved_rows[0]["validation_status"] == "pipeline_error"
     assert saved_rows[0]["lesson_output"] == {}
@@ -196,7 +228,7 @@ def test_generate_records_success_once(client, monkeypatch, saved_rows):
     monkeypatch.setattr(
         main,
         "run_pipeline",
-        lambda concept_input: PipelineResult(
+        lambda concept_input, on_stage=None: PipelineResult(
             lesson_plan=LESSON_PLAN,
             validation=ValidationResult(passed=True),
             status=PipelineStatus.SUCCESS,
@@ -204,7 +236,7 @@ def test_generate_records_success_once(client, monkeypatch, saved_rows):
         ),
     )
 
-    response = client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+    _post, response = _generate(client, concept="이미지 인식", grade=5)
 
     assert response.status_code == 200
     assert len(saved_rows) == 1
@@ -218,7 +250,7 @@ def test_generate_records_success_once(client, monkeypatch, saved_rows):
 def test_generate_passes_form_values_to_pipeline(client, monkeypatch, saved_rows):
     captured = {}
 
-    def capture(concept_input: ConceptInput):
+    def capture(concept_input: ConceptInput, on_stage=None):
         captured["input"] = concept_input
         return PipelineResult(
             lesson_plan=LESSON_PLAN,
@@ -229,7 +261,7 @@ def test_generate_passes_form_values_to_pipeline(client, monkeypatch, saved_rows
 
     monkeypatch.setattr(main, "run_pipeline", capture)
 
-    client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+    _generate(client, concept="이미지 인식", grade=5)
 
     assert captured["input"].raw_concept_name == "이미지 인식"
     assert captured["input"].target_grade == 5
@@ -239,13 +271,114 @@ def test_generate_passes_form_values_to_pipeline(client, monkeypatch, saved_rows
 def test_generate_blocked_when_rate_limit_exceeded(client, monkeypatch, saved_rows):
     monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 99)
     monkeypatch.setattr(
-        main, "run_pipeline", lambda concept_input: pytest.fail("한도 초과인데 파이프라인이 실행됨")
+        main, "run_pipeline", lambda concept_input, on_stage=None: pytest.fail("한도 초과인데 파이프라인이 실행됨")
     )
 
     response = client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
 
     assert response.status_code == 429
     assert saved_rows == []
+
+
+# ---------- 진행 표시 폴링 ----------
+
+
+def test_generate_returns_polling_panel_before_result(client, monkeypatch, saved_rows):
+    """POST는 파이프라인을 기다리지 않고 진행 패널만 즉시 돌려준다."""
+    monkeypatch.setattr(
+        main,
+        "run_pipeline",
+        lambda concept_input, on_stage=None: PipelineResult(
+            lesson_plan=LESSON_PLAN,
+            validation=ValidationResult(passed=True),
+            status=PipelineStatus.SUCCESS,
+            warning=None,
+        ),
+    )
+
+    response = client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+
+    assert response.status_code == 200
+    assert 'id="gen-progress"' in response.text
+    assert 'hx-trigger="every 1s"' in response.text
+    # 첫 단계가 현재 단계로 표시되고, 다섯 단계가 모두 보인다.
+    assert '<li class="current">\n            개념 분석' in response.text
+    for _code, label in main.STAGES:
+        assert label in response.text
+    # 결과 조각은 아직 아니다.
+    assert "/redownload" not in response.text
+
+
+def test_generate_progress_tracks_stage_and_retry(client, monkeypatch, saved_rows):
+    """on_stage 콜백이 job 상태를 갱신해야 폴링이 실제 진행을 보여준다."""
+    observed = []
+
+    def fake_pipeline(concept_input, on_stage=None):
+        on_stage("A2", "start", 0)
+        observed.append(_job_states())
+        # "end"는 무시한다 — 다음 단계의 "start"까지 직전 단계가 그대로 보여야 한다.
+        on_stage("A2", "end", 0)
+        observed.append(_job_states())
+        on_stage("C", "start", 2)
+        observed.append(_job_states())
+        return PipelineResult(
+            lesson_plan=LESSON_PLAN,
+            validation=ValidationResult(passed=True),
+            status=PipelineStatus.SUCCESS,
+            warning=None,
+        )
+
+    monkeypatch.setattr(main, "run_pipeline", fake_pipeline)
+
+    client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+
+    assert observed == [[("A2", 0)], [("A2", 0)], [("C", 2)]]
+
+
+def _job_states():
+    with main._generation_jobs_lock:
+        return [(job.stage, job.retry_count) for job in main._generation_jobs.values()]
+
+
+def test_generate_progress_hides_other_users_job(client, monkeypatch, saved_rows):
+    """job_id를 알아내도 남의 생성 결과는 볼 수 없다."""
+    other = _user()
+    job_id = "f" * 32
+    with main._generation_jobs_lock:
+        main._generation_jobs[job_id] = main._GenerationJob(
+            user=other, concept="이미지 인식", grade=5
+        )
+    try:
+        response = client.get(f"/generate/progress/{job_id}")
+    finally:
+        with main._generation_jobs_lock:
+            main._generation_jobs.pop(job_id, None)
+
+    assert response.status_code == 404
+
+
+def test_generate_progress_404_for_unknown_job(client, saved_rows):
+    assert client.get("/generate/progress/" + "0" * 32).status_code == 404
+
+
+def test_generate_progress_stops_polling_after_timeout(client, monkeypatch, saved_rows):
+    """끝나지 않는 생성이 무한 폴링으로 남지 않는다."""
+    job_id = "a" * 32
+    job = main._GenerationJob(user=_user(), concept="이미지 인식", grade=5)
+    # 소유권 검사를 통과해야 하므로 로그인 사용자로 맞춘다.
+    job.user = client.app.dependency_overrides[auth.get_current_user]()
+    job.started_at -= main.GENERATION_TIMEOUT_SECONDS + 1
+    with main._generation_jobs_lock:
+        main._generation_jobs[job_id] = job
+    try:
+        response = client.get(f"/generate/progress/{job_id}")
+    finally:
+        with main._generation_jobs_lock:
+            main._generation_jobs.pop(job_id, None)
+
+    assert response.status_code == 200
+    assert main.MSG_GENERATION_TIMEOUT in response.text
+    assert 'id="gen-progress"' not in response.text
 
 
 # ---------- 재출력: 무저장 스트리밍 · 카운트 제외 ----------
@@ -383,7 +516,7 @@ def test_generate_refreshes_banner_out_of_band(client, monkeypatch, saved_rows):
     monkeypatch.setattr(
         main,
         "run_pipeline",
-        lambda concept_input: PipelineResult(
+        lambda concept_input, on_stage=None: PipelineResult(
             lesson_plan={},
             validation=ValidationResult(passed=False),
             status=PipelineStatus.UNSUPPORTED_CONCEPT,
@@ -391,7 +524,8 @@ def test_generate_refreshes_banner_out_of_band(client, monkeypatch, saved_rows):
         ),
     )
 
-    body = client.post("/generate", data={"concept": "김치찌개", "grade": 5}).text
+    _post, response = _generate(client, concept="김치찌개", grade=5)
+    body = response.text
 
     assert 'id="rate-limit"' in body
     assert 'hx-swap-oob="true"' in body

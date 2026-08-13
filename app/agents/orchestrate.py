@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Callable
 
 from app.agents.concept_collect.logic import analyze_concept as collect_concept
 from app.agents.curriculum_search.logic import CurriculumSearchError, search_curriculum
@@ -57,6 +58,36 @@ MSG_AGENT_FAILURE = "일시적인 오류로 교안 생성에 실패했습니다.
 
 def _elapsed_ms(start: float) -> float:
     return (time.monotonic() - start) * 1000
+
+
+# 화면에 진행 상황을 보여주기 위한 단계 전환 알림. (stage, phase, retry_count)를
+# 받으며 stage는 아래 STAGES의 키, phase는 "start" 또는 "end"다.
+# E(main.py)가 이 콜백으로 job 상태를 갱신하고, 화면은 그 상태를 폴링한다.
+StageCallback = Callable[[str, str, int], None]
+
+# 화면에 보여줄 단계 순서와 이름. 파이프라인 호출 순서와 일치해야 한다 —
+# 여기가 어긋나면 사용자에게 실제와 다른 진행 상황을 보여주게 된다.
+STAGES: tuple[tuple[str, str], ...] = (
+    ("A1", "개념 분석"),
+    ("A2", "성취기준 검색"),
+    ("B", "단원 매핑"),
+    ("C", "교안 작성"),
+    ("D", "검증"),
+)
+
+
+def _notify(on_stage: StageCallback | None, stage: str, phase: str, retry_count: int = 0) -> None:
+    """단계 전환을 호출부에 알린다.
+
+    콜백은 화면 표시용 부가 기능이므로 실패해도 파이프라인을 죽이면 안 된다 —
+    교안은 이미 만들어졌는데 진행 표시 코드의 버그로 결과를 잃는 상황을 막는다.
+    """
+    if on_stage is None:
+        return
+    try:
+        on_stage(stage, phase, retry_count)
+    except Exception:
+        logger.exception(f"stage_callback_failed stage={stage} phase={phase}")
 
 
 # ── 미구현 에이전트 스텁 ──────────────────────────────
@@ -107,7 +138,9 @@ def _forbidden_term_violations(violations: list[str]) -> set[str]:
 # ── 오케스트레이션 본체 ──────────────────────────────
 
 
-def run_pipeline(user_input: ConceptInput) -> PipelineResult:
+def run_pipeline(
+    user_input: ConceptInput, on_stage: StageCallback | None = None
+) -> PipelineResult:
     """사용자 입력을 받아 교안 생성까지 전체 파이프라인을 실행한다.
 
     A1의 unsupported_concept/ambiguous_input, A2의 검색 0건은 오류가 아닌
@@ -119,6 +152,9 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
     모든 반환 지점은 warning 문구와 함께 PipelineStatus를 채운다 — 문구는
     사용자 안내용이고, 호출부(main.py의 레이트리밋 판정·기록)는 status로만
     분기한다.
+
+    on_stage는 선택적 단계 전환 알림 콜백이다. 화면의 진행 표시에만 쓰이며
+    파이프라인 판단에는 관여하지 않는다. 넘기지 않으면 아무 일도 하지 않는다.
     """
     pipeline_start = time.monotonic()
 
@@ -132,12 +168,14 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
     try:
         # ① A1: 개념 수집
         stage_start = time.monotonic()
+        _notify(on_stage, "A1", "start")
         logger.info(f"stage_start stage=A1 concept={user_input.raw_concept_name!r}")
         concept_result = collect_concept(user_input, context)
         logger.info(
             f"stage_end stage=A1 status={concept_result.status} "
             f"elapsed_ms={_elapsed_ms(stage_start):.1f}"
         )
+        _notify(on_stage, "A1", "end")
 
         if concept_result.status != "success":
             # PipelineStatus의 문자열 값이 A1의 status와 일치하도록 정의돼 있어
@@ -161,12 +199,14 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
 
         # ② A2: 교육과정 검색
         stage_start = time.monotonic()
+        _notify(on_stage, "A2", "start")
         logger.info("stage_start stage=A2")
         search_results = search_curriculum(concept_result.search_query)
         logger.info(
             f"stage_end stage=A2 results={len(search_results)} "
             f"elapsed_ms={_elapsed_ms(stage_start):.1f}"
         )
+        _notify(on_stage, "A2", "end")
 
         if not search_results:
             logger.info(
@@ -182,9 +222,11 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
 
         # ③ B: 매핑 (context 동반 전달 — 학생 이해도·비유 가능성 평가가 학년 의존적)
         stage_start = time.monotonic()
+        _notify(on_stage, "B", "start")
         logger.info("stage_start stage=B")
         mapping = map_concept(concept_result.concept, search_results, context)
         logger.info(f"stage_end stage=B elapsed_ms={_elapsed_ms(stage_start):.1f}")
+        _notify(on_stage, "B", "end")
 
         # ④ C + D: 교안 생성 · 검증 재시도 루프
         # 재시도 카운터는 반복문 지역 변수로 관리한다(ValidationResult에 상태값을 두지 않음).
@@ -199,6 +241,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
         while True:
             try:
                 stage_start = time.monotonic()
+                _notify(on_stage, "C", "start", retry_count)
                 logger.info(f"stage_start stage=C retry_count={retry_count}")
                 new_lesson_plan = generate_lesson(
                     mapping,
@@ -209,8 +252,10 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
                     caution_terms=concept_result.concept.caution_terms,
                 )
                 logger.info(f"stage_end stage=C elapsed_ms={_elapsed_ms(stage_start):.1f}")
+                _notify(on_stage, "C", "end", retry_count)
 
                 stage_start = time.monotonic()
+                _notify(on_stage, "D", "start", retry_count)
                 logger.info(f"stage_start stage=D retry_count={retry_count}")
                 new_validation = validate(
                     new_lesson_plan,
@@ -225,6 +270,7 @@ def run_pipeline(user_input: ConceptInput) -> PipelineResult:
                     f"stage_end stage=D passed={new_validation.passed} "
                     f"elapsed_ms={_elapsed_ms(stage_start):.1f}"
                 )
+                _notify(on_stage, "D", "end", retry_count)
             except _AGENT_ERRORS:
                 # 재시도가 오히려 장애를 키우지 않도록 즉시 중단한다. 직전 회차
                 # 결과가 있으면 그걸로 폴백하고, 첫 시도부터 실패했으면 바깥
