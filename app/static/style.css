@@ -444,11 +444,21 @@ table.history-table td:last-child {
     color: #fff;
 }
 
-/* 상세 화면에서 DOCX 재출력 바로 옆에 서는 삭제 버튼 — 같은 크기로 맞춘다.
+/* 상세 화면에서 DOCX 재출력 바로 옆에 서는 삭제 버튼 — 크기와 세로 위치를 맞춘다.
    표 안의 삭제 버튼은 작아야 하므로 기본 button 규칙은 건드리지 않는다. */
 .download-btn + form button {
     padding: 0.5rem 1.125rem;
     font-size: 0.9375rem;
+}
+
+/* form이 그냥 inline이면 정렬 기준이 버튼 상자가 아니라 form의 글꼴 기반 라인
+   박스가 된다 — 그 안에서 버튼만 삐져나와 두 버튼의 세로 위치가 어긋난다.
+   inline-flex로 만들면 form의 상자가 버튼과 같아진다. 바깥 여백도 재출력
+   버튼과 똑같이 줘야 가운데가 맞는다. */
+.download-btn + form {
+    display: inline-flex;
+    vertical-align: middle;
+    margin: var(--space-2) 0 var(--space-4);
 }
 
 /* ── htmx 진행 표시 ─────────────────────────── */
