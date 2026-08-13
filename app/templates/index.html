@@ -1,30 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-</head>
-<body>
-    <header class="site-header">
-        <span>EDUTECH - PROTOTYPE</span>
-        <nav class="site-nav">
-            {% if user %}
-                <span>{{ user.name }}님{% if user.role == "admin" %} (admin){% endif %}</span>
-                <a href="/mypage">마이페이지</a>
-                {% if user.role == "admin" %}<a href="/admin">관리자</a>{% endif %}
-                <form method="post" action="/logout" style="display:inline">
-                    <button type="submit">로그아웃</button>
-                </form>
-            {% else %}
-                <a href="/login">로그인</a>
-                <a href="/signup">회원가입</a>
-            {% endif %}
-        </nav>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}Edutech{% endblock %}
+{% block content %}
         <p>교안 생성 시스템에 오신 것을 환영합니다.</p>
         {% if user %}
         {% include "_rate_limit.html" %}
@@ -48,9 +24,16 @@
         </form>
         <div id="spinner" class="htmx-indicator">생성 중입니다... 최대 1분 정도 걸립니다.</div>
         <div id="result"></div>
+        {% else %}
+        <div class="notice">교안을 생성하려면 <a href="/login">로그인</a>이 필요합니다.</div>
+        {% endif %}
+{% endblock %}
+{% block page_scripts %}
         <script>
             (function () {
                 var form = document.querySelector(".info-form");
+                // 비로그인 화면에는 생성 폼이 없다.
+                if (!form) { return; }
                 var generating = false;
 
                 form.addEventListener("htmx:beforeRequest", function () {
@@ -71,12 +54,4 @@
                 });
             })();
         </script>
-        {% else %}
-        <div class="notice">교안을 생성하려면 <a href="/login">로그인</a>이 필요합니다.</div>
-        {% endif %}
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}

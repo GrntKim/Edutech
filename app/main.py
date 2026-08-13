@@ -211,8 +211,12 @@ def generate(
 
 
 @app.get("/signup", response_class=HTMLResponse)
-def signup_form(request: Request):
-    return templates.TemplateResponse(request, "signup.html", {"error": None})
+def signup_form(
+    request: Request, current_user: User | None = Depends(auth.get_optional_user)
+):
+    return templates.TemplateResponse(
+        request, "signup.html", {"error": None, "user": current_user}
+    )
 
 
 @app.post("/signup", response_class=HTMLResponse)
@@ -221,12 +225,13 @@ def signup(
     email: str = Form(...),
     password: str = Form(...),
     name: str = Form(...),
+    current_user: User | None = Depends(auth.get_optional_user),
 ):
     if len(password) < 8:
         return templates.TemplateResponse(
             request,
             "signup.html",
-            {"error": "비밀번호는 8자 이상이어야 합니다."},
+            {"error": "비밀번호는 8자 이상이어야 합니다.", "user": current_user},
             status_code=400,
         )
 
@@ -241,7 +246,7 @@ def signup(
         return templates.TemplateResponse(
             request,
             "signup.html",
-            {"error": "이미 가입된 이메일입니다."},
+            {"error": "이미 가입된 이메일입니다.", "user": current_user},
             status_code=400,
         )
 
@@ -251,18 +256,27 @@ def signup(
 
 
 @app.get("/login", response_class=HTMLResponse)
-def login_form(request: Request):
-    return templates.TemplateResponse(request, "login.html", {"error": None})
+def login_form(
+    request: Request, current_user: User | None = Depends(auth.get_optional_user)
+):
+    return templates.TemplateResponse(
+        request, "login.html", {"error": None, "user": current_user}
+    )
 
 
 @app.post("/login", response_class=HTMLResponse)
-def login(request: Request, email: str = Form(...), password: str = Form(...)):
+def login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    current_user: User | None = Depends(auth.get_optional_user),
+):
     user = db.get_user_by_email(email.strip().lower())
     if user is None or not auth.verify_password(password, user.password_hash):
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "이메일 또는 비밀번호가 올바르지 않습니다."},
+            {"error": "이메일 또는 비밀번호가 올바르지 않습니다.", "user": current_user},
             status_code=401,
         )
 
@@ -359,7 +373,7 @@ def delete_lesson_request(request_id: UUID, user: User = Depends(auth.get_curren
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request, admin: User = Depends(auth.require_admin)):
-    return templates.TemplateResponse(request, "admin.html", {"admin": admin})
+    return templates.TemplateResponse(request, "admin.html", {"user": admin})
 
 
 def _parse_subject_query(value: str | None) -> Subject | None:
@@ -405,7 +419,7 @@ def admin_chunks(
     )
 
     context = {
-        "admin": admin,
+        "user": admin,
         "items": items,
         "q": q or "",
         "subject": subject or "",
@@ -425,7 +439,7 @@ def admin_chunk_edit_form(
     if chunk is None:
         raise HTTPException(status_code=404, detail="성취기준을 찾을 수 없습니다.")
     return templates.TemplateResponse(
-        request, "admin_chunk_edit.html", {"admin": admin, "chunk": chunk, "saved": False}
+        request, "admin_chunk_edit.html", {"user": admin, "chunk": chunk, "saved": False}
     )
 
 
@@ -456,12 +470,29 @@ def admin_chunk_update(
     if updated is None:
         raise HTTPException(status_code=404, detail="성취기준을 찾을 수 없습니다.")
     return templates.TemplateResponse(
-        request, "admin_chunk_edit.html", {"admin": admin, "chunk": updated, "saved": True}
+        request, "admin_chunk_edit.html", {"user": admin, "chunk": updated, "saved": True}
     )
 
 
 def _is_htmx_request(request: Request) -> bool:
     return request.headers.get("hx-request") == "true"
+
+
+def _user_from_request(request: Request) -> User | None:
+    """예외 핸들러용 로그인 상태 조회.
+
+    핸들러는 의존성 주입을 못 쓰므로 쿠키에서 직접 세션을 찾는다. base.html의
+    네비게이션이 user 하나만 보기 때문에, 이 값이 없으면 로그인한 사용자가
+    에러 페이지에서만 비로그인 상태로 보인다.
+
+    조회 실패는 삼킨다 — DB가 죽어서 500이 난 상황에서 에러 페이지가 또
+    DB를 찔러 죽으면 사용자에게 아무것도 못 보여준다.
+    """
+    try:
+        return auth.get_optional_user(request.cookies.get(auth.SESSION_COOKIE_NAME))
+    except Exception:
+        logger.exception("error_page_user_lookup_failed")
+        return None
 
 
 @app.exception_handler(HTTPException)
@@ -475,7 +506,10 @@ def handle_http_exception(request: Request, exc: HTTPException) -> Response:
     if _is_htmx_request(request):
         return HTMLResponse(f'<div class="notice">{exc.detail}</div>', status_code=exc.status_code)
     return templates.TemplateResponse(
-        request, "error.html", {"message": exc.detail}, status_code=exc.status_code
+        request,
+        "error.html",
+        {"message": exc.detail, "user": _user_from_request(request)},
+        status_code=exc.status_code,
     )
 
 
@@ -488,4 +522,9 @@ def handle_error(request: Request, exc: Exception) -> Response:
     message = "처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
     if _is_htmx_request(request):
         return HTMLResponse(f'<div class="notice">{message}</div>', status_code=500)
-    return templates.TemplateResponse(request, "error.html", {"message": message}, status_code=500)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        {"message": message, "user": _user_from_request(request)},
+        status_code=500,
+    )

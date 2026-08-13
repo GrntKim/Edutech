@@ -1,23 +1,7 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>성취기준 관리 - Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <header class="site-header">
-        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
-        <nav class="site-nav">
-            <span>{{ admin.name }}님 (admin)</span>
-            <a href="/admin">관리자 대시보드</a>
-            <form method="post" action="/logout" style="display:inline">
-                <button type="submit">로그아웃</button>
-            </form>
-        </nav>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}성취기준 관리 - Edutech{% endblock %}
+{% block nav_extra %}<a href="/admin">관리자 대시보드</a>{% endblock %}
+{% block content %}
         <h1>성취기준 관리</h1>
         <p>코드·단원명·성취기준 원문으로 검색해 텍스트 오류(파싱 오류, 오탈자 등)를 직접 수정할 수 있습니다.</p>
 
@@ -77,9 +61,4 @@
         {% else %}
         <p>검색 결과가 없습니다.</p>
         {% endif %}
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}

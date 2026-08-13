@@ -1,16 +1,6 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>로그인 - Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <header class="site-header">
-        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}로그인 - Edutech{% endblock %}
+{% block content %}
         <h1>로그인</h1>
         {% if error %}
         <div class="notice">{{ error }}</div>
@@ -27,9 +17,4 @@
             <button type="submit">로그인</button>
         </form>
         <p>계정이 없으신가요? <a href="/signup">회원가입</a></p>
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}

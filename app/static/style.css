@@ -19,6 +19,11 @@ body {
     font-weight: bold;
 }
 
+/* 로고만 본문 글자색을 따른다. nav 링크는 기본 링크 색을 유지한다. */
+.site-logo a {
+    color: inherit;
+}
+
 .site-nav {
     display: flex;
     align-items: center;

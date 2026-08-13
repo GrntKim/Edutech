@@ -1,0 +1,45 @@
+{# 모든 전체 페이지의 공통 골격. 헤더·네비게이션·푸터와 head를 여기 한 곳에서만
+   관리한다(이전에는 9개 파일에 복사돼 있었고 파일마다 조금씩 달랐다).
+
+   상속하지 않는 템플릿이 둘 있다:
+   - _rate_limit.html : #rate-limit만 갈아끼우는 out-of-band swap 조각
+   - result.html      : #result에 삽입되는 조각. mypage_detail.html이 include로도 쓴다 #}
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Edutech{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+    {# CDN 대신 벤더링한 사본을 쓴다. 버전·업그레이드 절차는 app/static/vendor/README.md 참고. #}
+    <script src="{{ url_for('static', path='/vendor/htmx.min.js') }}"></script>
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+    <header class="site-header">
+        <span class="site-logo"><a href="/">EDUTECH - PROTOTYPE</a></span>
+        <nav class="site-nav">
+            {% if user %}
+            <span>{{ user.name }}님{% if user.role == "admin" %} (admin){% endif %}</span>
+            <a href="/mypage">마이페이지</a>
+            {% if user.role == "admin" %}<a href="/admin">관리자</a>{% endif %}
+            {# 페이지별 추가 링크(관리자 화면의 상위 목록 링크 등) #}
+            {% block nav_extra %}{% endblock %}
+            <form method="post" action="/logout">
+                <button type="submit">로그아웃</button>
+            </form>
+            {% else %}
+            <a href="/login">로그인</a>
+            <a href="/signup">회원가입</a>
+            {% endif %}
+        </nav>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="site-footer">
+        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
+    </footer>
+    {% block page_scripts %}{% endblock %}
+</body>
+</html>

@@ -1,22 +1,6 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>마이페이지 - Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <header class="site-header">
-        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
-        <nav class="site-nav">
-            <span>{{ user.name }}님</span>
-            <form method="post" action="/logout" style="display:inline">
-                <button type="submit">로그아웃</button>
-            </form>
-        </nav>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}마이페이지 - Edutech{% endblock %}
+{% block content %}
         <h1>생성 히스토리</h1>
 
         {% if items %}
@@ -66,9 +50,4 @@
         {% else %}
         <p>아직 생성한 교안이 없습니다. <a href="/">교안 생성하러 가기</a></p>
         {% endif %}
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}

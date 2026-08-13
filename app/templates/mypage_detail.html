@@ -1,22 +1,6 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ item.concept_name }} - Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <header class="site-header">
-        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
-        <nav class="site-nav">
-            <a href="/mypage">마이페이지</a>
-            <form method="post" action="/logout" style="display:inline">
-                <button type="submit">로그아웃</button>
-            </form>
-        </nav>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}{{ item.concept_name }} - Edutech{% endblock %}
+{% block content %}
         <p><a href="/mypage">&larr; 목록으로</a></p>
         <h1>{{ item.concept_name }} ({{ item.target_grade }}학년)</h1>
         <p>검증 상태: {{ item.validation_status | status_label }}</p>
@@ -37,9 +21,4 @@
         {% set warning = None %}
         {% set request_id = None %}{# 다운로드 버튼은 위에 따로 있으므로 조각 안 버튼은 숨긴다 #}
         {% include "result.html" %}
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}
