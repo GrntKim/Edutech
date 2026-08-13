@@ -1,35 +1,147 @@
-* {
+/* 초등 교사가 수업 준비 중 짧게 쓰는 도구.
+   화려함보다 밀도와 가독성 — 조용한 중립 회색 위에 동작(생성·다운로드)에만
+   초록 액센트를 쓴다.
+
+   다크 모드는 두지 않는다. result.html이 자체 인라인 스타일로 밝은 배경을
+   전제한 표(#f2f2f2, #D4E0EC)를 그리고 있어, 껍데기만 반전되면 오히려 읽기
+   어려워진다. */
+
+:root {
+    /* 색: 중립 회색 + 액션용 초록 하나. 경고는 기존 앰버를 유지한다. */
+    --bg: #ffffff;
+    --bg-sunken: #f5f6f5;
+    --border: #dde0dd;
+    --border-strong: #c4c9c4;
+
+    --text: #1b1e1b;
+    --text-muted: #5c635c;
+    --text-faint: #868d86;
+
+    --accent: #2f6f4f;
+    --accent-strong: #24593f;
+    --accent-soft: #eef4f0;
+
+    --warn-border: #e0c878;
+    --warn-bg: #fff8e8;
+    --warn-text: #6b4f0f;
+
+    --danger: #a33a2f;
+
+    /* 간격: 4px 배수 한 축으로만 쓴다. */
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --space-6: 2rem;
+
+    --radius: 6px;
+    --radius-sm: 4px;
+
+    /* 본문 최대 폭. main과 조각(.notice 등)이 같은 값을 쓴다. */
+    --content-width: 900px;
+
+    /* 외부 폰트는 로드하지 않는다. 기존 스택은 라틴 전용이라 한글이 브라우저
+       기본 글꼴로 떨어졌다 — 시스템에 있는 한글 글꼴을 명시한다. */
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto,
+        "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", "Malgun Gothic",
+        "맑은 고딕", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+/* 예전에는 `* { margin: 0; padding: 0 }`이라 제목과 본문이 붙어 있었다.
+   여백을 없애는 대신 필요한 곳에만 다시 준다. */
+body,
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+dl,
+dd,
+figure {
     margin: 0;
     padding: 0;
 }
 
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.65;
+    color: var(--text);
+    background: var(--bg);
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    /* 한글 본문에서 자간이 뜨는 것을 살짝 조인다. */
+    letter-spacing: -0.01em;
+    -webkit-text-size-adjust: 100%;
 }
+
+a {
+    color: var(--accent-strong);
+    text-underline-offset: 2px;
+}
+
+a:hover {
+    color: var(--accent);
+}
+
+/* 키보드로 훑는 사용자를 위해 초점을 분명히 보여준다. 마우스 클릭에는 뜨지 않는다. */
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+/* ── 레이아웃 ────────────────────────────────── */
 
 .site-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.2);
-    font-weight: bold;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    font-weight: 600;
+    /* 긴 교안을 훑는 동안에도 이동 수단이 남아 있게 한다. */
+    position: sticky;
+    top: 0;
+    z-index: 20;
+}
+
+.site-logo {
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
 }
 
 /* 로고만 본문 글자색을 따른다. nav 링크는 기본 링크 색을 유지한다. */
 .site-logo a {
     color: inherit;
+    text-decoration: none;
+}
+
+.site-logo a:hover {
+    color: var(--accent-strong);
 }
 
 .site-nav {
     display: flex;
     align-items: center;
-    column-gap: 1rem;
-    font-weight: normal;
-    font-size: 0.9rem;
+    flex-wrap: wrap;
+    column-gap: var(--space-4);
+    row-gap: var(--space-1);
+    font-weight: 400;
+    font-size: 0.875rem;
+    color: var(--text-muted);
 }
 
 .site-nav form {
@@ -41,158 +153,480 @@ body {
     border: none;
     color: inherit;
     text-decoration: underline;
+    text-underline-offset: 2px;
     cursor: pointer;
     font: inherit;
     padding: 0;
 }
 
-.pagination {
-    display: flex;
-    column-gap: 1rem;
-    margin-top: 1rem;
-}
-
-table.history-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 1rem;
-}
-
-table.history-table th,
-table.history-table td {
-    text-align: left;
-    padding: 0.5rem;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+.site-nav button:hover {
+    color: var(--text);
 }
 
 main {
     flex: 1;
-    max-width: 900px;
+    width: 100%;
+    max-width: var(--content-width);
     margin: 0 auto;
-    padding: 1rem;
-}
-
-.info-form {
-    padding-top: 1rem;
-    display: flex;
-    flex-direction: column;
-    row-gap: 1rem;
-}
-
-.info-form button {
-    align-self: flex-start;
-    padding: 0.1rem 0.2rem;
+    padding: var(--space-5) var(--space-4) var(--space-6);
 }
 
 .site-footer {
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 1rem;
-    border-top: 1px solid rgba(0, 0, 0, 0.2);
+    padding: var(--space-4);
+    border-top: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 0.8125rem;
 }
+
+/* ── 타이포그래피 ────────────────────────────── */
+
+h1 {
+    font-size: 1.375rem;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: -0.02em;
+    margin-bottom: var(--space-3);
+}
+
+h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.4;
+    margin: var(--space-5) 0 var(--space-2);
+}
+
+p {
+    margin-bottom: var(--space-3);
+}
+
+p:last-child {
+    margin-bottom: 0;
+}
+
+main > ul,
+main > ol {
+    margin: 0 0 var(--space-4) 1.25rem;
+}
+
+main > ul li,
+main > ol li {
+    padding: var(--space-1) 0;
+}
+
+/* admin_chunk_edit의 메타 정보 목록 — 이름/값 두 열로 읽는다. */
+dl {
+    display: grid;
+    grid-template-columns: minmax(6rem, max-content) 1fr;
+    gap: var(--space-1) var(--space-4);
+    margin-bottom: var(--space-5);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-sunken);
+    border-radius: var(--radius);
+    font-size: 0.9375rem;
+}
+
+dt {
+    color: var(--text-muted);
+}
+
+dd {
+    margin: 0;
+}
+
+/* ── 폼 ─────────────────────────────────────── */
+
+.info-form {
+    display: flex;
+    flex-direction: column;
+    row-gap: var(--space-4);
+    /* 한 줄이 지나치게 길어지지 않게 잡는다. 표(900px)보다 좁다. */
+    max-width: 40rem;
+    margin: var(--space-4) 0 var(--space-5);
+}
+
+.info-form > div {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.info-form label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+select,
+textarea {
+    width: 100%;
+    padding: 0.5rem 0.625rem;
+    font: inherit;
+    font-size: 0.9375rem;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+}
+
+textarea {
+    line-height: 1.6;
+    resize: vertical;
+}
+
+input::placeholder {
+    color: var(--text-faint);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 0;
+    border-color: var(--accent);
+}
+
+/* 기본 버튼은 조용한 보조 동작(삭제, 페이지 이동 등)이다. */
+button {
+    font: inherit;
+    font-size: 0.875rem;
+    padding: 0.375rem 0.75rem;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    cursor: pointer;
+    /* 상세 화면에서 DOCX 버튼과 삭제 버튼이 한 줄에 나란히 선다. */
+    vertical-align: middle;
+}
+
+button:hover {
+    background: var(--bg-sunken);
+}
+
+/* 폼의 제출 버튼만 주된 동작으로 강조한다. */
+.info-form button {
+    align-self: flex-start;
+    padding: 0.5rem 1.125rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.info-form button:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+}
+
+/* 생성 중에는 버튼이 잠긴다(index.html 스크립트). 눌리지 않는다는 것이 보여야 한다. */
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.info-form button:disabled:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+/* 표 안의 삭제 버튼 — 위험한 동작이라 hover에서만 붉게 든다. */
+.history-table button:hover {
+    color: var(--danger);
+    border-color: var(--danger);
+    background: var(--bg);
+}
+
+/* ── 표 ─────────────────────────────────────── */
+
+table.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: var(--space-4);
+    font-size: 0.9375rem;
+}
+
+table.history-table th,
+table.history-table td {
+    text-align: left;
+    padding: 0.5rem 0.625rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+table.history-table th {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+}
+
+table.history-table tbody tr:hover {
+    background: var(--bg-sunken);
+}
+
+/* 마지막 열은 상세보기·수정·삭제 같은 동작이라 오른쪽으로 붙인다. */
+table.history-table th:last-child,
+table.history-table td:last-child {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    column-gap: var(--space-4);
+    margin-top: var(--space-5);
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+/* ── 안내·상태 ──────────────────────────────── */
+
+.notice {
+    max-width: var(--content-width);
+    margin: var(--space-4) 0;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--warn-border);
+    border-radius: var(--radius);
+    background: var(--warn-bg);
+    color: var(--warn-text);
+    font-size: 0.9375rem;
+}
+
+.notice a {
+    color: inherit;
+}
+
+.rate-limit {
+    max-width: var(--content-width);
+    margin: 0 0 var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-sunken);
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+}
+
+.rate-limit strong {
+    color: var(--text);
+}
+
+.download-btn {
+    display: inline-block;
+    margin: var(--space-2) var(--space-2) var(--space-4) 0;
+    padding: 0.5rem 1.125rem;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    border-radius: var(--radius);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
+.download-btn:hover {
+    background: var(--accent-strong);
+    color: #fff;
+}
+
+/* ── htmx 진행 표시 ─────────────────────────── */
 
 .htmx-indicator { display: none; }
 .htmx-request .htmx-indicator { display: block; }
+/* hx-indicator가 가리키는 요소 자신에는 htmx-request가 직접 붙는다(공백 없음). */
 .htmx-request.htmx-indicator { display: block; }
 
-/* hx-boost 요청 중 화면 상단에 뜨는 진행 막대. body의 hx-indicator가 이걸
-   가리키므로, 요청을 낸 요소가 아니라 이 요소 자신에 htmx-request 클래스가
-   붙는다 — 위의 .htmx-request.htmx-indicator(공백 없음) 규칙이 그 경우다. */
+/* hx-boost 요청 중 화면 맨 위에 뜨는 막대. 서버 응답 시간은 그대로이므로
+   "눌렸다"는 신호만 준다 — 진행률을 아는 척하지 않는 불확정 애니메이션. */
 #page-progress {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
-    height: 3px;
-    background: #2f6f4f;
-    animation: page-progress-slide 1s linear infinite;
-    z-index: 1000;
+    height: 2px;
+    background: var(--accent-soft);
+    overflow: hidden;
+    z-index: 30;
+}
+
+#page-progress::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 35%;
+    background: var(--accent);
+    animation: page-progress-slide 1.1s ease-in-out infinite;
 }
 
 @keyframes page-progress-slide {
-    from { opacity: 0.35; }
-    50%  { opacity: 1; }
-    to   { opacity: 0.35; }
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(320%); }
 }
 
-.notice {
-    max-width: 900px;
-    margin: 2rem auto;
-    padding: 1rem;
-    border: 1px solid #e0c878;
-    border-radius: 6px;
-    background: #fff6e0;
-}
-
-.rate-limit {
-    max-width: 900px;
-    margin: 1rem auto 0;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d6d6d6;
-    border-radius: 6px;
-    background: #f7f7f7;
-    font-size: 0.9rem;
-}
+/* ── 교안 생성 진행 패널 ────────────────────── */
 
 .gen-progress {
-    margin-top: 1rem;
-    padding: 1rem;
-    border: 1px solid #d6d6d6;
-    border-radius: 6px;
-    background: #f7f7f7;
+    margin-top: var(--space-4);
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-sunken);
 }
 
 .gen-progress-title {
-    font-weight: bold;
+    margin-bottom: var(--space-3);
+    font-size: 0.9375rem;
+    font-weight: 600;
 }
 
+/* 기본 숫자 마커 대신 단계 번호를 직접 그린다 — 완료/진행 중 상태를 그 자리에 표시한다. */
 .gen-stages {
-    margin: 0.75rem 0 0 1.25rem;
+    list-style: none;
+    counter-reset: gen-stage;
+    margin: 0;
+    padding: 0;
+    font-size: 0.9375rem;
 }
 
 .gen-stages li {
-    padding: 0.15rem 0;
-    color: #8a8a8a;
+    counter-increment: gen-stage;
+    position: relative;
+    padding: 0.25rem 0 0.25rem 1.75rem;
+    color: var(--text-faint);
+}
+
+.gen-stages li::before {
+    content: counter(gen-stage);
+    position: absolute;
+    left: 0;
+    top: 0.4rem;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--bg);
+    font-size: 0.6875rem;
+    line-height: 1.15rem;
+    text-align: center;
 }
 
 .gen-stages li.done {
-    color: #2f6f4f;
+    color: var(--text-muted);
 }
 
-.gen-stages li.done::after {
-    content: " 완료";
-    font-size: 0.85em;
+.gen-stages li.done::before {
+    content: "✓";
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
 }
 
 .gen-stages li.current {
-    color: #000;
-    font-weight: bold;
+    color: var(--text);
+    font-weight: 600;
+}
+
+.gen-stages li.current::before {
+    color: var(--accent-strong);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+/* 상태 꼬리표는 CSS로 붙인다 — 조각 템플릿은 단계 이름만 담는다. */
+.gen-stages li.done::after,
+.gen-stages li.current::after {
+    margin-left: var(--space-2);
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-faint);
+}
+
+.gen-stages li.done::after {
+    content: "완료";
 }
 
 .gen-stages li.current::after {
-    content: " 진행 중...";
-    font-weight: normal;
-    font-size: 0.85em;
+    content: "진행 중";
+    color: var(--accent-strong);
 }
 
 .gen-retry {
-    margin-top: 0.75rem;
-    font-size: 0.9rem;
-    color: #8a5a00;
+    margin: var(--space-3) 0 0;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+    font-size: 0.875rem;
+    color: var(--warn-text);
 }
 
-.download-btn {
-    display: inline-block;
-    margin-bottom: 1rem;
-    padding: 0.5rem 1rem;
-    background: #2f6f4f;
-    color: #fff;
-    text-decoration: none;
-    border-radius: 4px;
-    font-weight: bold;
+/* ── 좁은 화면 ──────────────────────────────── */
+
+@media (max-width: 640px) {
+    main {
+        padding: var(--space-4) var(--space-3) var(--space-5);
+    }
+
+    .site-header {
+        position: static;
+        align-items: flex-start;
+    }
+
+    /* 표를 감쌀 요소를 새로 넣을 수 없으므로 표 자체를 스크롤 영역으로 만든다. */
+    table.history-table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    dl {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+
+    dt {
+        margin-top: var(--space-2);
+    }
 }
 
-.download-btn:hover {
-    background: #24593f;
+/* ── 인쇄 ───────────────────────────────────── */
+
+/* 교안을 그대로 인쇄하는 경우가 많다. 화면 껍데기는 종이에 남기지 않는다. */
+@media print {
+    .site-header,
+    .site-footer,
+    #page-progress,
+    .gen-progress,
+    .rate-limit,
+    .pagination,
+    .info-form,
+    .download-btn,
+    button {
+        display: none !important;
+    }
+
+    body {
+        color: #000;
+    }
+
+    main {
+        max-width: none;
+        padding: 0;
+    }
+}
+
+/* 애니메이션을 꺼둔 사용자에게는 움직임 대신 정적인 표시를 준다. */
+@media (prefers-reduced-motion: reduce) {
+    #page-progress::after {
+        animation: none;
+        width: 100%;
+    }
 }
