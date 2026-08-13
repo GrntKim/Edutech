@@ -94,7 +94,27 @@ main {
 
 .htmx-indicator { display: none; }
 .htmx-request .htmx-indicator { display: block; }
-.htmx-request.htmx-indicator { display: block; } 
+.htmx-request.htmx-indicator { display: block; }
+
+/* hx-boost 요청 중 화면 상단에 뜨는 진행 막대. body의 hx-indicator가 이걸
+   가리키므로, 요청을 낸 요소가 아니라 이 요소 자신에 htmx-request 클래스가
+   붙는다 — 위의 .htmx-request.htmx-indicator(공백 없음) 규칙이 그 경우다. */
+#page-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: #2f6f4f;
+    animation: page-progress-slide 1s linear infinite;
+    z-index: 1000;
+}
+
+@keyframes page-progress-slide {
+    from { opacity: 0.35; }
+    50%  { opacity: 1; }
+    to   { opacity: 0.35; }
+}
 
 .notice {
     max-width: 900px;

@@ -10,12 +10,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Edutech{% endblock %}</title>
+    {# scrollIntoViewOnBoost=false: boost는 기본적으로 교체한 타깃을 화면 상단으로
+       끌어올린다. 목록에서 상세로 갔다 뒤로 돌아왔을 때 위치가 튀지 않게 끈다 —
+       뒤로/앞으로의 스크롤 복원은 htmx의 history 스냅샷이 따로 처리한다. #}
+    <meta name="htmx-config" content='{"scrollIntoViewOnBoost": false}'>
     <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
     {# CDN 대신 벤더링한 사본을 쓴다. 버전·업그레이드 절차는 app/static/vendor/README.md 참고. #}
     <script src="{{ url_for('static', path='/vendor/htmx.min.js') }}"></script>
     {% block head_extra %}{% endblock %}
 </head>
-<body>
+{# hx-boost: 링크·폼을 AJAX로 가로채 body만 교체한다. 전체 리로드가 사라져
+   CSS·JS 재파싱과 흰 화면이 없어진다.
+   hx-indicator는 자식으로 상속되므로 boost 요청 전체가 상단 진행 막대를 쓴다.
+   생성 폼(#spinner)처럼 자체 hx-indicator를 가진 요소는 그쪽이 우선한다. #}
+<body hx-boost="true" hx-indicator="#page-progress">
+    <div id="page-progress" class="htmx-indicator"></div>
     <header class="site-header">
         <span class="site-logo"><a href="/">EDUTECH - PROTOTYPE</a></span>
         <nav class="site-nav">
@@ -40,6 +49,18 @@
     <footer class="site-footer">
         &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
     </footer>
+    <script>
+        // htmx는 기본적으로 non-2xx 응답을 swap하지 않는다. 이 서비스는 로그인
+        // 실패를 401 + login.html, 회원가입 실패를 400 + signup.html, 예외를
+        // 500 + error.html로 돌려주므로, 이 처리가 없으면 boost가 켜진 순간
+        // 로그인 실패 시 화면이 아무 반응도 하지 않는다.
+        document.body.addEventListener("htmx:beforeSwap", function (e) {
+            if (e.detail.xhr.status >= 400) {
+                e.detail.shouldSwap = true;
+                e.detail.isError = false;
+            }
+        });
+    </script>
     {% block page_scripts %}{% endblock %}
 </body>
 </html>

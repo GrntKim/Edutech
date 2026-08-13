@@ -241,7 +241,10 @@
     <h1>교수학습과정안</h1>
 
     {% if request_id %}
-    <a href="/mypage/requests/{{ request_id }}/redownload" class="download-btn">DOCX 다운로드</a>
+    {# hx-boost="false": 이 조각은 boost가 걸린 body 안으로 삽입되므로 링크도
+       boost 대상이 된다. DOCX는 첨부파일 응답이라 가로채면 다운로드가 깨진다. #}
+    <a href="/mypage/requests/{{ request_id }}/redownload" class="download-btn"
+       hx-boost="false">DOCX 다운로드</a>
     {% endif %}
 
     <table class="form meta">

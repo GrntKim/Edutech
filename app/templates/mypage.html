@@ -28,8 +28,11 @@
                     <td>{{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
                     <td><a href="/mypage/requests/{{ item.id }}">상세보기</a></td>
                     <td>
+                        {# boost된 폼에서는 인라인 onsubmit의 취소가 htmx에 전달된다는
+                           보장이 없다. 취소해도 삭제가 나가면 되돌릴 수 없으므로
+                           htmx 자체 확인 절차를 쓴다. #}
                         <form method="post" action="/mypage/requests/{{ item.id }}/delete"
-                              onsubmit="return confirm('이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.');">
+                              hx-confirm="이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.">
                             <button type="submit">삭제</button>
                         </form>
                     </td>

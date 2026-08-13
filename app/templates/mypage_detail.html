@@ -8,12 +8,16 @@
 
         {# lesson_output이 비면 생성에 실패한 기록이라 내려받을 교안이 없다. #}
         {% if item.lesson_output %}
-        <a href="/mypage/requests/{{ item.id }}/redownload" class="download-btn">DOCX 재출력</a>
+        {# hx-boost="false": boost는 응답을 HTML로 보고 body에 밀어 넣는다. DOCX는
+           첨부파일 응답이므로 가로채면 다운로드가 깨진다. #}
+        <a href="/mypage/requests/{{ item.id }}/redownload" class="download-btn"
+           hx-boost="false">DOCX 재출력</a>
         {% else %}
         <p class="notice">생성에 실패한 요청입니다: {{ item.validation_status | status_label }}</p>
         {% endif %}
+        {# 인라인 onsubmit 취소가 boost된 폼에서 지켜진다는 보장이 없어 hx-confirm을 쓴다. #}
         <form method="post" action="/mypage/requests/{{ item.id }}/delete" style="display:inline"
-              onsubmit="return confirm('이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.');">
+              hx-confirm="이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.">
             <button type="submit">삭제</button>
         </form>
 
