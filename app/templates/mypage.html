@@ -25,7 +25,8 @@
                         {% if not item.lesson_output %}<strong>생성 실패</strong> — {% endif %}
                         {{ item.validation_status | status_label }}
                     </td>
-                    <td>{{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                    {# DB에는 UTC로 저장된다. 표시할 때만 KST로 바꾼다. #}
+                    <td>{{ item.created_at | kst }}</td>
                     <td><a href="/mypage/requests/{{ item.id }}">상세보기</a></td>
                     <td>
                         {# boost된 폼에서는 인라인 onsubmit의 취소가 htmx에 전달된다는

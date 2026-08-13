@@ -627,6 +627,29 @@ def test_mypage_marks_failed_rows(client, monkeypatch, user):
     assert "검색 결과가 없습니다" in body
 
 
+def test_created_at_is_shown_in_kst(client, monkeypatch, user):
+    """DB에는 UTC로 저장되고 화면에는 KST로 나온다.
+
+    이전에는 템플릿이 UTC 값을 그대로 찍어 9시간 뒤처진 시각이 떴다(24시간제라
+    3시간 차이처럼 보였다).
+    """
+    row = _lesson_request(user.id, LESSON_PLAN)
+    row.created_at = datetime(2026, 8, 13, 5, 23, tzinfo=timezone.utc)
+    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset: [row])
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id: 1)
+    monkeypatch.setattr(db, "get_lesson_request_by_id", lambda request_id: row)
+
+    for path in ("/mypage", f"/mypage/requests/{row.id}"):
+        body = client.get(path).text
+        assert "2026-08-13 14:23" in body, path
+        assert "2026-08-13 05:23" not in body, path
+
+
+def test_to_kst_treats_naive_value_as_utc():
+    """DDL이 timestamptz가 아니게 만들어지는 사고에 대한 방어(auth._is_expired와 같은 규약)."""
+    assert main.to_kst(datetime(2026, 8, 13, 5, 23)) == "2026-08-13 14:23"
+
+
 def test_mypage_renders_status_code_as_label(client, monkeypatch, user):
     """validation_status에 저장된 PipelineStatus 값은 화면에서 한글로 바뀐다."""
     rows = [

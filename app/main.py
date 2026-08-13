@@ -8,7 +8,8 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID, uuid4
@@ -68,6 +69,31 @@ def status_label(value: str) -> str:
 
 templates.env.filters["status_label"] = status_label
 
+# 저장은 UTC, 표시는 KST.
+#
+# DB의 시각 컬럼은 timestamptz이고 기본값이 now()라 항상 UTC로 들어간다. 그건
+# 그대로 둔다 — 저장 시점을 지역 시간으로 바꾸면 나중에 지역이 늘거나 서머타임을
+# 쓰는 지역이 끼면 과거 기록의 의미가 흔들린다. 대신 세션 타임존을 지정하지 않아
+# psycopg가 UTC aware datetime을 돌려주고, 템플릿이 그 값을 그대로 찍고 있었다.
+# 화면에는 9시간 뒤처진 시각이 떴다(24시간제라 3시간 차이로 보였다).
+#
+# 변환은 표시 직전 한 곳에서만 한다.
+KST = ZoneInfo("Asia/Seoul")
+
+
+def to_kst(value: datetime, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    """UTC로 저장된 시각을 한국 시간 문자열로 바꾼다.
+
+    tz 정보가 없는 값이 섞여 들어오면 UTC로 간주한다 — DDL이 timestamptz가
+    아니게 만들어지는 사고에 대한 방어이며, auth._is_expired와 같은 규약이다.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(KST).strftime(fmt)
+
+
+templates.env.filters["kst"] = to_kst
+
 
 def current_year() -> int:
     """푸터의 저작권 연도.
@@ -76,8 +102,11 @@ def current_year() -> int:
     hx-boost가 body를 교체하면 그 스크립트가 문서 로드 이후에 실행된다 —
     그 시점의 document.write는 문서 전체를 덮어써서 페이지가 연도 네 글자만
     남는다. 서버에서 렌더해 스크립트 자체를 없앤다.
+
+    Cloud Run 컨테이너의 로컬 시간은 UTC라 naive now()를 쓰면 12월 31일
+    21시(KST)부터 세 시간 동안 이전 연도가 뜬다 — 표시용 시각은 전부 KST로 맞춘다.
     """
-    return datetime.now().year
+    return datetime.now(KST).year
 
 
 templates.env.globals["current_year"] = current_year

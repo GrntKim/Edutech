@@ -4,7 +4,8 @@
         <p><a href="/mypage">&larr; 목록으로</a></p>
         <h1>{{ item.concept_name }} ({{ item.target_grade }}학년)</h1>
         <p>검증 상태: {{ item.validation_status | status_label }}</p>
-        <p>생성 시각: {{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
+        {# DB에는 UTC로 저장된다. 표시할 때만 KST로 바꾼다. #}
+        <p>생성 시각: {{ item.created_at | kst }}</p>
 
         {# lesson_output이 비면 생성에 실패한 기록이라 내려받을 교안이 없다. #}
         {% if item.lesson_output %}
