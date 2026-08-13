@@ -1,22 +1,6 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>마이페이지 - Edutech</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-</head>
-<body>
-    <header class="site-header">
-        <span><a href="/" style="color:inherit">EDUTECH - PROTOTYPE</a></span>
-        <nav class="site-nav">
-            <span>{{ user.name }}님</span>
-            <form method="post" action="/logout" style="display:inline">
-                <button type="submit">로그아웃</button>
-            </form>
-        </nav>
-    </header>
-    <main>
+{% extends "base.html" %}
+{% block title %}마이페이지 - Edutech{% endblock %}
+{% block content %}
         <h1>생성 히스토리</h1>
 
         {% if items %}
@@ -41,11 +25,15 @@
                         {% if not item.lesson_output %}<strong>생성 실패</strong> — {% endif %}
                         {{ item.validation_status | status_label }}
                     </td>
-                    <td>{{ item.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                    {# DB에는 UTC로 저장된다. 표시할 때만 KST로 바꾼다. #}
+                    <td>{{ item.created_at | kst }}</td>
                     <td><a href="/mypage/requests/{{ item.id }}">상세보기</a></td>
                     <td>
+                        {# boost된 폼에서는 인라인 onsubmit의 취소가 htmx에 전달된다는
+                           보장이 없다. 취소해도 삭제가 나가면 되돌릴 수 없으므로
+                           htmx 자체 확인 절차를 쓴다. #}
                         <form method="post" action="/mypage/requests/{{ item.id }}/delete"
-                              onsubmit="return confirm('이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.');">
+                              hx-confirm="이 생성물을 삭제하시겠습니까? 되돌릴 수 없습니다.">
                             <button type="submit">삭제</button>
                         </form>
                     </td>
@@ -66,9 +54,4 @@
         {% else %}
         <p>아직 생성한 교안이 없습니다. <a href="/">교안 생성하러 가기</a></p>
         {% endif %}
-    </main>
-    <footer class="site-footer">
-        &copy; <script>document.write(new Date().getFullYear());</script> EDUTECH
-    </footer>
-</body>
-</html>
+{% endblock %}

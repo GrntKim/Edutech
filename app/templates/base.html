@@ -1,0 +1,72 @@
+{# 모든 전체 페이지의 공통 골격. 헤더·네비게이션·푸터와 head를 여기 한 곳에서만
+   관리한다(이전에는 9개 파일에 복사돼 있었고 파일마다 조금씩 달랐다).
+
+   상속하지 않는 템플릿이 둘 있다:
+   - _rate_limit.html : #rate-limit만 갈아끼우는 out-of-band swap 조각
+   - result.html      : #result에 삽입되는 조각. mypage_detail.html이 include로도 쓴다 #}
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Edutech{% endblock %}</title>
+    {# scrollIntoViewOnBoost=false: boost는 기본적으로 교체한 타깃을 화면 상단으로
+       끌어올린다. 목록에서 상세로 갔다 뒤로 돌아왔을 때 위치가 튀지 않게 끈다 —
+       뒤로/앞으로의 스크롤 복원은 htmx의 history 스냅샷이 따로 처리한다. #}
+    <meta name="htmx-config" content='{"scrollIntoViewOnBoost": false}'>
+    <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+    {# CDN 대신 벤더링한 사본을 쓴다. 버전·업그레이드 절차는 app/static/vendor/README.md 참고. #}
+    <script src="{{ url_for('static', path='/vendor/htmx.min.js') }}"></script>
+    <script>
+        // head에 두는 이유: boost는 body만 갈아끼우므로 body 안의 인라인 스크립트는
+        // 이동할 때마다 다시 실행돼 리스너가 쌓인다. head는 교체되지 않아 한 번만
+        // 실행된다. htmx 이벤트는 document까지 버블링하므로 여기서 받을 수 있다.
+        //
+        // htmx는 기본적으로 non-2xx 응답을 swap하지 않는다. 이 서비스는 로그인
+        // 실패를 401 + login.html, 회원가입 실패를 400 + signup.html, 예외를
+        // 500 + error.html로 돌려주므로, 이 처리가 없으면 boost가 켜진 순간
+        // 로그인 실패 시 화면이 아무 반응도 하지 않는다.
+        document.addEventListener("htmx:beforeSwap", function (e) {
+            if (e.detail.xhr.status >= 400) {
+                e.detail.shouldSwap = true;
+                e.detail.isError = false;
+            }
+        });
+    </script>
+    {% block head_extra %}{% endblock %}
+</head>
+{# hx-boost: 링크·폼을 AJAX로 가로채 body만 교체한다. 전체 리로드가 사라져
+   CSS·JS 재파싱과 흰 화면이 없어진다.
+   hx-indicator는 자식으로 상속되므로 boost 요청 전체가 상단 진행 막대를 쓴다.
+   생성 폼(#spinner)처럼 자체 hx-indicator를 가진 요소는 그쪽이 우선한다. #}
+<body hx-boost="true" hx-indicator="#page-progress">
+    <div id="page-progress" class="htmx-indicator"></div>
+    <header class="site-header">
+        <span class="site-logo"><a href="/">EDUTECH - PROTOTYPE</a></span>
+        <nav class="site-nav">
+            {% if user %}
+            <span>{{ user.name }}님{% if user.role == "admin" %} (admin){% endif %}</span>
+            <a href="/mypage">마이페이지</a>
+            {% if user.role == "admin" %}<a href="/admin">관리자</a>{% endif %}
+            {# 페이지별 추가 링크(관리자 화면의 상위 목록 링크 등) #}
+            {% block nav_extra %}{% endblock %}
+            <form method="post" action="/logout">
+                <button type="submit">로그아웃</button>
+            </form>
+            {% else %}
+            <a href="/login">로그인</a>
+            <a href="/signup">회원가입</a>
+            {% endif %}
+        </nav>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="site-footer">
+        {# 연도는 서버에서 렌더한다. document.write로 찍으면 boost가 body를 교체한
+           뒤 실행돼 문서 전체를 덮어쓴다(페이지에 연도만 남는다). #}
+        &copy; {{ current_year() }} EDUTECH
+    </footer>
+    {% block page_scripts %}{% endblock %}
+</body>
+</html>
