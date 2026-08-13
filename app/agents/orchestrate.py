@@ -70,7 +70,7 @@ StageCallback = Callable[[str, str, int], None]
 STAGES: tuple[tuple[str, str], ...] = (
     ("A1", "개념 분석"),
     ("A2", "성취기준 검색"),
-    ("B", "단원 매핑"),
+    ("B", "교육과정 매핑"),
     ("C", "교안 작성"),
     ("D", "검증"),
 )

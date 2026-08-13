@@ -357,7 +357,9 @@ table.history-table td {
     text-align: left;
     padding: 0.5rem 0.625rem;
     border-bottom: 1px solid var(--border);
-    vertical-align: top;
+    /* 행 높이가 검증 상태 문구나 삭제 버튼에 따라 들쭉날쭉해서, 한 행의 값들이
+       같은 줄에 놓이도록 가운데로 맞춘다. */
+    vertical-align: middle;
 }
 
 table.history-table th {
@@ -428,6 +430,9 @@ table.history-table td:last-child {
     background: var(--accent);
     color: #fff;
     text-decoration: none;
+    /* 옆의 삭제 버튼은 1px 테두리가 있어 그만큼 더 높다. 투명 테두리로 상자
+       높이를 맞춘다(모양은 그대로). */
+    border: 1px solid transparent;
     border-radius: var(--radius);
     font-size: 0.9375rem;
     font-weight: 600;
@@ -437,6 +442,13 @@ table.history-table td:last-child {
 .download-btn:hover {
     background: var(--accent-strong);
     color: #fff;
+}
+
+/* 상세 화면에서 DOCX 재출력 바로 옆에 서는 삭제 버튼 — 같은 크기로 맞춘다.
+   표 안의 삭제 버튼은 작아야 하므로 기본 button 규칙은 건드리지 않는다. */
+.download-btn + form button {
+    padding: 0.5rem 1.125rem;
+    font-size: 0.9375rem;
 }
 
 /* ── htmx 진행 표시 ─────────────────────────── */
