@@ -1,6 +1,18 @@
 {# 실패해도 파이프라인 실행은 카운트되므로, 조각을 돌려줄 때마다 배너를 OOB로 갱신한다. #}
 {% with rate_oob = True %}{% include "_rate_limit.html" %}{% endwith %}
 
+{# 교안이 나왔으면 위쪽 입력 폼을 치운다. htmx는 #result만 갈아끼우므로 폼은
+   out-of-band swap으로만 건드릴 수 있다.
+
+   - lesson 조건: 실패(안내 문구만 있는 경우)에는 폼을 남긴다 — 바로 다시 시도해야 한다.
+   - rate_status 조건: 생성 흐름에서만 동작한다. mypage_detail.html이 이 조각을
+     include할 때는 rate_status가 없다(_rate_limit.html과 같은 규약).
+     그 화면에는 #generate-form 자체가 없어 OOB가 조용히 빗나가기만 하지만,
+     의도를 조건으로 남겨둔다. #}
+{% if lesson and rate_status %}
+<div id="generate-form" hx-swap-oob="true"></div>
+{% endif %}
+
 {% if warning %}
 <div class="notice">{{ warning }}</div>
 {% endif %}
@@ -238,14 +250,27 @@
 </style>
 
 <div class="lesson-sheet">
-    <h1>교수학습과정안</h1>
-
-    {% if request_id %}
-    {# hx-boost="false": 이 조각은 boost가 걸린 body 안으로 삽입되므로 링크도
-       boost 대상이 된다. DOCX는 첨부파일 응답이라 가로채면 다운로드가 깨진다. #}
-    <a href="/mypage/requests/{{ request_id }}/redownload" class="download-btn"
-       hx-boost="false">DOCX 다운로드</a>
+    {# 액션은 교안 맨 위에 둔다 — 다 읽고 스크롤을 되감지 않아도 되게. #}
+    {% if request_id or rate_status %}
+    <div class="lesson-actions">
+        {% if request_id %}
+        {# hx-boost="false": 이 조각은 boost가 걸린 body 안으로 삽입되므로 링크도
+           boost 대상이 된다. DOCX는 첨부파일 응답이라 가로채면 다운로드가 깨진다. #}
+        <a href="/mypage/requests/{{ request_id }}/redownload" class="download-btn"
+           hx-boost="false">DOCX 다운로드</a>
+        {% else %}
+        <span></span>{# 다운로드가 없어도 "새로 생성"은 오른쪽에 선다 #}
+        {% endif %}
+        {% if rate_status %}
+        {# 파이프라인을 다시 돌리지 않는다. boost로 /generate를 다시 받아 폼·빈
+           결과·최신 배너를 한 번에 되돌릴 뿐이다(생성 횟수 미차감). 결과는 이미
+           히스토리에 저장돼 있다. #}
+        <a href="/generate" class="regen-btn">새로 생성</a>
+        {% endif %}
+    </div>
     {% endif %}
+
+    <h1>교수학습과정안</h1>
 
     <table class="form meta">
         <tr>

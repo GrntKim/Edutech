@@ -519,6 +519,35 @@ table.history-table td:last-child {
     color: var(--text);
 }
 
+/* 교안 맨 위 액션 바 — 왼쪽 다운로드, 오른쪽 새로 생성. */
+.lesson-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+/* 다운로드가 주 동작이므로 "새로 생성"은 조용한 보조 톤으로 둔다. */
+.regen-btn {
+    display: inline-block;
+    margin: var(--space-2) 0 var(--space-4);
+    padding: 0.5rem 1.125rem;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    text-decoration: none;
+    font-size: 0.9375rem;
+    vertical-align: middle;
+}
+
+.regen-btn:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+    background: var(--bg-sunken);
+}
+
 .download-btn {
     display: inline-block;
     margin: var(--space-2) var(--space-2) var(--space-4) 0;
@@ -770,6 +799,7 @@ table.history-table td:last-child {
     .rate-limit,
     .pagination,
     .info-form,
+    .lesson-actions,
     .download-btn,
     button {
         display: none !important;

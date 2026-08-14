@@ -248,6 +248,47 @@ def test_generate_records_success_once(client, monkeypatch, saved_rows):
     assert "/download/" not in response.text
 
 
+def test_success_fragment_hides_form_and_offers_reset(client, monkeypatch, saved_rows):
+    """교안이 나오면 위쪽 폼을 OOB로 비우고, 상단 액션 바에 새로 생성을 둔다."""
+    monkeypatch.setattr(
+        main,
+        "run_pipeline",
+        lambda concept_input, on_stage=None: PipelineResult(
+            lesson_plan=LESSON_PLAN,
+            validation=ValidationResult(passed=True),
+            status=PipelineStatus.SUCCESS,
+            warning=None,
+        ),
+    )
+
+    _post, response = _generate(client, concept="이미지 인식", grade=5)
+    body = " ".join(response.text.split())
+
+    assert '<div id="generate-form" hx-swap-oob="true"></div>' in body
+    assert 'class="regen-btn"' in body
+    # 다운로드는 제목 위 액션 바 안에 있어야 한다.
+    assert body.index("download-btn") < body.index("<h1>교수학습과정안</h1>")
+
+
+def test_failure_fragment_keeps_form(client, monkeypatch, saved_rows):
+    """교안 없이 안내만 나오는 경우에는 폼을 남긴다 — 바로 다시 시도해야 한다."""
+    monkeypatch.setattr(
+        main,
+        "run_pipeline",
+        lambda concept_input, on_stage=None: PipelineResult(
+            lesson_plan={},
+            validation=ValidationResult(passed=False),
+            status=PipelineStatus.UNSUPPORTED_CONCEPT,
+            warning="AI 개념이 아닙니다",
+        ),
+    )
+
+    _post, response = _generate(client, concept="김치찌개", grade=5)
+
+    assert 'id="generate-form"' not in response.text
+    assert "regen-btn" not in response.text
+
+
 def test_generate_passes_form_values_to_pipeline(client, monkeypatch, saved_rows):
     captured = {}
 
