@@ -735,8 +735,8 @@ def test_mypage_marks_failed_rows(client, monkeypatch, user):
         _lesson_request(user.id, LESSON_PLAN, validation_status="passed"),
         _lesson_request(user.id, {}, validation_status="검색 결과가 없습니다"),
     ]
-    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset: rows)
-    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id: len(rows))
+    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: rows)
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: len(rows))
 
     body = client.get("/mypage").text
 
@@ -753,14 +753,75 @@ def test_created_at_is_shown_in_kst(client, monkeypatch, user):
     """
     row = _lesson_request(user.id, LESSON_PLAN)
     row.created_at = datetime(2026, 8, 13, 5, 23, tzinfo=timezone.utc)
-    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset: [row])
-    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id: 1)
+    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: [row])
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: 1)
     monkeypatch.setattr(db, "get_lesson_request_by_id", lambda request_id: row)
 
     for path in ("/mypage", f"/mypage/requests/{row.id}"):
         body = client.get(path).text
         assert "2026-08-13 14:23" in body, path
         assert "2026-08-13 05:23" not in body, path
+
+
+def test_mypage_shows_subject_column(client, monkeypatch, user):
+    """과목은 lesson_output에 저장된 값을 그대로 보여준다. 실패 기록은 값이 없어 "-"."""
+    rows = [
+        _lesson_request(user.id, LESSON_PLAN),
+        _lesson_request(user.id, {}, validation_status="no_curriculum_match"),
+    ]
+    monkeypatch.setattr(
+        db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: rows
+    )
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: len(rows))
+
+    body = client.get("/mypage").text
+
+    assert "<td>실과</td>" in body
+    assert "<td>-</td>" in body
+
+
+def test_mypage_passes_subject_filter_to_db(client, monkeypatch, user):
+    calls = {}
+
+    def fake_list(user_id, limit, offset, subject=None):
+        calls["subject"] = subject
+        return []
+
+    monkeypatch.setattr(db, "list_lesson_requests", fake_list)
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: 0)
+
+    body = client.get("/mypage", params={"subject": "수학"}).text
+
+    assert calls["subject"] == "수학"
+    # 결과가 0건이어도 필터 폼은 남아 있어야 되돌아올 수 있다.
+    assert 'name="subject"' in body
+
+
+def test_mypage_subject_options_come_from_labels(client, monkeypatch):
+    """옵션은 하드코딩이 아니라 C의 subject_label()에서 파생한다."""
+    monkeypatch.setattr(
+        db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: []
+    )
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: 0)
+
+    body = client.get("/mypage").text
+
+    for label in main.SUBJECT_LABEL_OPTIONS:
+        assert f'<option value="{label}"' in body
+
+
+def test_mypage_pagination_keeps_subject_filter(client, monkeypatch, user):
+    rows = [_lesson_request(user.id, LESSON_PLAN)]
+    monkeypatch.setattr(
+        db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: rows
+    )
+    monkeypatch.setattr(
+        db, "count_lesson_requests", lambda user_id, subject=None: main.MYPAGE_PAGE_SIZE * 3
+    )
+
+    body = client.get("/mypage", params={"subject": "수학"}).text
+
+    assert f"subject={quote('수학')}&amp;page=2" in body
 
 
 def test_to_kst_treats_naive_value_as_utc():
@@ -774,8 +835,8 @@ def test_mypage_renders_status_code_as_label(client, monkeypatch, user):
         _lesson_request(user.id, LESSON_PLAN, validation_status="success"),
         _lesson_request(user.id, {}, validation_status="no_curriculum_match"),
     ]
-    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset: rows)
-    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id: len(rows))
+    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: rows)
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: len(rows))
 
     body = client.get("/mypage").text
 

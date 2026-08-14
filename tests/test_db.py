@@ -532,6 +532,46 @@ def test_list_lesson_requests_orders_desc_and_paginates(monkeypatch):
     assert params == (user_id, 10, 20)
 
 
+def test_list_lesson_requests_filters_by_subject(monkeypatch):
+    """과목은 별도 컬럼이 아니라 lesson_output(jsonb) 안의 한글 라벨이다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    db.list_lesson_requests(user_id, limit=10, offset=0, subject="수학")
+
+    query, params = cursor.executed[0]
+    assert "lesson_output->>'subject' = %s" in query
+    assert params == (user_id, "수학", 10, 0)
+
+
+def test_count_lesson_requests_filters_by_subject(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 2})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    assert db.count_lesson_requests(user_id, subject="과학") == 2
+
+    query, params = cursor.executed[0]
+    assert "lesson_output->>'subject' = %s" in query
+    assert params == (user_id, "과학")
+
+
+def test_count_lesson_requests_without_subject_has_no_filter(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 7})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    assert db.count_lesson_requests(user_id) == 7
+
+    query, params = cursor.executed[0]
+    assert "lesson_output" not in query
+    assert params == (user_id,)
+
+
 def test_get_lesson_request_by_id_returns_none_when_missing(monkeypatch):
     _set_valid_env(monkeypatch)
     cursor = _FakeCursor(fetchone_result=None)

@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 # 가져온다 — 화면에 하드코딩하면 A1이 값을 바꿨을 때 안내만 조용히 어긋난다.
 from app.agents.concept_collect.logic import BROAD_TERMS, MAX_LENGTH, MIN_LENGTH
 from app.agents.lesson_generate import LessonOutput, render_lesson_docx
+from app.agents.lesson_generate.schema import subject_label
 from app.agents.orchestrate import MAX_RETRIES, STAGES, run_pipeline
 from app.lib import auth, db
 from app.lib.types import (
@@ -50,6 +51,14 @@ ADMIN_CHUNKS_PAGE_SIZE = 20
 # 총 페이지가 이 값을 넘으면 페이지네이션에 «처음»/«마지막»을 함께 보여준다.
 # 이하일 때는 이전/다음만으로 충분하다(_pagination.html).
 PAGINATION_ENDS_THRESHOLD = 5
+
+# 마이페이지 과목 필터의 선택지.
+#
+# lesson_output에는 영문 enum이 아니라 C가 변환해 넣은 한글 라벨이 저장돼 있어
+# (LessonOutput.subject = subject_label(MappingResult.subject)), 필터 값도 라벨을
+# 쓴다. 목록을 하드코딩하지 않고 C의 변환 함수에서 파생한다 — 라벨이 바뀌면
+# 선택지도 따라간다(읽기 전용 import).
+SUBJECT_LABEL_OPTIONS = [subject_label(s) for s in Subject]
 
 # lesson_requests.validation_status에는 PipelineStatus 값이 그대로 들어간다.
 # 화면에는 사람이 읽을 수 있는 문구로 바꿔서 보여준다.
@@ -577,16 +586,35 @@ def logout(session_id: str | None = Cookie(default=None, alias=auth.SESSION_COOK
 
 
 @app.get("/mypage", response_class=HTMLResponse)
-def mypage(request: Request, page: int = 1, user: User = Depends(auth.get_current_user)):
+def mypage(
+    request: Request,
+    page: int = 1,
+    subject: str | None = None,
+    user: User = Depends(auth.get_current_user),
+):
+    """생성 히스토리. subject는 lesson_output에 저장된 한글 과목 라벨이다.
+
+    선택지에 없는 값(오타·구버전 링크)은 조회 결과가 0건이 될 뿐 오류가 아니다 —
+    필터 폼은 목록이 비어도 계속 보이므로 되돌아올 수 있다.
+    """
     page = max(page, 1)
     offset = (page - 1) * MYPAGE_PAGE_SIZE
-    items = db.list_lesson_requests(user.id, limit=MYPAGE_PAGE_SIZE, offset=offset)
-    total = db.count_lesson_requests(user.id)
+    items = db.list_lesson_requests(
+        user.id, limit=MYPAGE_PAGE_SIZE, offset=offset, subject=subject
+    )
+    total = db.count_lesson_requests(user.id, subject=subject)
     total_pages = max((total + MYPAGE_PAGE_SIZE - 1) // MYPAGE_PAGE_SIZE, 1)
     return templates.TemplateResponse(
         request,
         "mypage.html",
-        {"user": user, "items": items, "page": page, "total_pages": total_pages},
+        {
+            "user": user,
+            "items": items,
+            "page": page,
+            "total_pages": total_pages,
+            "subject": subject or "",
+            "subjects": SUBJECT_LABEL_OPTIONS,
+        },
     )
 
 
