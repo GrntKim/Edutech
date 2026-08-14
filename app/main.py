@@ -47,6 +47,10 @@ DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 MYPAGE_PAGE_SIZE = 10
 ADMIN_CHUNKS_PAGE_SIZE = 20
 
+# 총 페이지가 이 값을 넘으면 페이지네이션에 «처음»/«마지막»을 함께 보여준다.
+# 이하일 때는 이전/다음만으로 충분하다(_pagination.html).
+PAGINATION_ENDS_THRESHOLD = 5
+
 # lesson_requests.validation_status에는 PipelineStatus 값이 그대로 들어간다.
 # 화면에는 사람이 읽을 수 있는 문구로 바꿔서 보여준다.
 _STATUS_LABELS = {
@@ -113,6 +117,9 @@ def current_year() -> int:
 
 
 templates.env.globals["current_year"] = current_year
+# import된 매크로(_pagination.html)는 호출한 템플릿의 컨텍스트를 못 보므로
+# 전역으로 노출한다 — 호출부마다 임계값을 넘겨주지 않아도 되게.
+templates.env.globals["pagination_ends_threshold"] = PAGINATION_ENDS_THRESHOLD
 
 
 @app.get("/", response_class=HTMLResponse)

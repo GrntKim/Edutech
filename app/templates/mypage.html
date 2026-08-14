@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import pagination %}
 {% block title %}마이페이지 - Edutech{% endblock %}
 {% block content %}
         <h1>생성 히스토리</h1>
@@ -42,15 +43,7 @@
             </tbody>
         </table>
 
-        <div class="pagination">
-            {% if page > 1 %}
-            <a href="/mypage?page={{ page - 1 }}">이전</a>
-            {% endif %}
-            <span>{{ page }} / {{ total_pages }}</span>
-            {% if page < total_pages %}
-            <a href="/mypage?page={{ page + 1 }}">다음</a>
-            {% endif %}
-        </div>
+        {{ pagination("/mypage", page, total_pages) }}
         {% else %}
         <p>아직 생성한 교안이 없습니다. <a href="/generate">교안 생성하러 가기</a></p>
         {% endif %}

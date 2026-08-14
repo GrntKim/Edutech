@@ -8,7 +8,7 @@
 
 import re
 from datetime import datetime, timezone
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 from uuid import uuid4
 
 import pytest
@@ -825,6 +825,37 @@ def test_admin_chunks_passes_query_and_subject_to_db(client, monkeypatch):
     assert calls["query"] == "분류"
     assert calls["subject"] == Subject.SCIENCE
     assert calls["offset"] == main.ADMIN_CHUNKS_PAGE_SIZE  # page=2 → 두 번째 페이지 offset
+
+
+def test_pagination_shows_ends_only_beyond_threshold(client, monkeypatch):
+    """페이지가 몇 장 안 되면 이전/다음만, 임계값을 넘으면 처음/마지막도 나온다."""
+    _as_admin()
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: [_chunk()])
+
+    def body_for(total_pages: int) -> str:
+        monkeypatch.setattr(
+            db, "count_chunks", lambda **kwargs: main.ADMIN_CHUNKS_PAGE_SIZE * total_pages
+        )
+        return client.get("/admin/chunks", params={"page": 2}).text
+
+    under = body_for(main.PAGINATION_ENDS_THRESHOLD)
+    assert "처음" not in under
+    assert "마지막" not in under
+
+    over = body_for(main.PAGINATION_ENDS_THRESHOLD + 1)
+    assert "처음" in over
+    assert "마지막" in over
+
+
+def test_pagination_preserves_filters_in_links(client, monkeypatch):
+    """페이지를 넘어가도 검색어·과목 필터가 유지돼야 한다."""
+    _as_admin()
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: [_chunk()])
+    monkeypatch.setattr(db, "count_chunks", lambda **kwargs: main.ADMIN_CHUNKS_PAGE_SIZE * 3)
+
+    body = client.get("/admin/chunks", params={"q": "분류", "subject": "SCIENCE"}).text
+
+    assert f"q={quote('분류')}&amp;subject=SCIENCE&amp;page=2" in body
 
 
 def test_admin_chunks_clamps_page_beyond_total_pages(client, monkeypatch):

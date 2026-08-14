@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import pagination %}
 {% block title %}성취기준 관리 - Edutech{% endblock %}
 {% block nav_extra %}<a href="/admin">관리자 대시보드</a>{% endblock %}
 {% block content %}
@@ -49,15 +50,7 @@
             </tbody>
         </table>
 
-        <div class="pagination">
-            {% if page > 1 %}
-            <a href="/admin/chunks?q={{ q|urlencode }}&subject={{ subject|urlencode }}&page={{ page - 1 }}">이전</a>
-            {% endif %}
-            <span>{{ page }} / {{ total_pages }}</span>
-            {% if page < total_pages %}
-            <a href="/admin/chunks?q={{ q|urlencode }}&subject={{ subject|urlencode }}&page={{ page + 1 }}">다음</a>
-            {% endif %}
-        </div>
+        {{ pagination("/admin/chunks", page, total_pages, {"q": q, "subject": subject}) }}
         {% else %}
         <p>검색 결과가 없습니다.</p>
         {% endif %}
