@@ -1,0 +1,39 @@
+{# 목록 화면 공용 페이지네이션. mypage.html과 admin_chunks.html이 거의 같은
+   코드를 각자 들고 있었다.
+
+   쓰는 쪽:
+     {% from "_pagination.html" import pagination %}
+     {{ pagination("/mypage", page, total_pages, {"subject": subject}) }}
+
+   params는 페이지를 넘어가도 유지돼야 하는 필터다(검색어·과목 등). 빈 값은
+   링크에서 빠진다. page는 매크로가 직접 붙이므로 params에 넣지 않는다.
+
+   «처음»/«마지막»은 총 페이지가 임계값을 넘을 때만 나온다. 임계값은 main.py의
+   PAGINATION_ENDS_THRESHOLD이며 Jinja 전역으로 들어온다 — import된 매크로는
+   호출한 템플릿의 컨텍스트를 못 보지만 환경 전역은 볼 수 있다. #}
+
+{% macro _query(params, target_page) -%}
+    {%- for key, value in params | dictsort -%}
+        {%- if value %}{{ key | urlencode }}={{ value | urlencode }}&amp;{% endif -%}
+    {%- endfor -%}
+    page={{ target_page }}
+{%- endmacro %}
+
+{% macro pagination(base_url, page, total_pages, params={}) %}
+{% set show_ends = total_pages > pagination_ends_threshold %}
+<div class="pagination">
+    {% if show_ends and page > 1 %}
+    <a href="{{ base_url }}?{{ _query(params, 1) }}">&laquo; 처음</a>
+    {% endif %}
+    {% if page > 1 %}
+    <a href="{{ base_url }}?{{ _query(params, page - 1) }}">이전</a>
+    {% endif %}
+    <span>{{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="{{ base_url }}?{{ _query(params, page + 1) }}">다음</a>
+    {% endif %}
+    {% if show_ends and page < total_pages %}
+    <a href="{{ base_url }}?{{ _query(params, total_pages) }}">마지막 &raquo;</a>
+    {% endif %}
+</div>
+{% endmacro %}

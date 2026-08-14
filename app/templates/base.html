@@ -33,6 +33,43 @@
             }
         });
     </script>
+    <script>
+        // 좁은 화면 사이드바 토글. 위와 같은 이유로 head에 한 번만 등록하고,
+        // 상태는 클로저가 아니라 매번 DOM(body의 nav-open)에서 읽는다 — boost가
+        // body 내용을 갈아끼워도 헤더 참조가 낡지 않는다.
+        (function () {
+            if (window.__edutechNavToggle) { return; }
+            window.__edutechNavToggle = true;
+
+            function setOpen(open) {
+                document.body.classList.toggle("nav-open", open);
+                var button = document.querySelector(".nav-toggle");
+                if (button) {
+                    button.setAttribute("aria-expanded", open ? "true" : "false");
+                    button.setAttribute("aria-label", open ? "메뉴 닫기" : "메뉴 열기");
+                }
+                var scrim = document.querySelector(".nav-scrim");
+                if (scrim) { scrim.hidden = !open; }
+            }
+
+            document.addEventListener("click", function (e) {
+                if (!(e.target instanceof Element)) { return; }
+                if (e.target.closest(".nav-toggle")) {
+                    setOpen(!document.body.classList.contains("nav-open"));
+                } else if (e.target.closest(".nav-scrim")) {
+                    setOpen(false);
+                }
+            });
+
+            document.addEventListener("keydown", function (e) {
+                if (e.key === "Escape") { setOpen(false); }
+            });
+
+            // boost는 body 안을 교체하지만 body 자신은 그대로라 nav-open 클래스가
+            // 남는다 — 이동한 화면 위에 사이드바가 열린 채 걸린다.
+            document.addEventListener("htmx:afterSwap", function () { setOpen(false); });
+        })();
+    </script>
     {% block head_extra %}{% endblock %}
 </head>
 {# hx-boost: 링크·폼을 AJAX로 가로채 body만 교체한다. 전체 리로드가 사라져
@@ -41,15 +78,17 @@
    생성 폼(#spinner)처럼 자체 hx-indicator를 가진 요소는 그쪽이 우선한다. #}
 <body hx-boost="true" hx-indicator="#page-progress">
     <div id="page-progress" class="htmx-indicator"></div>
+    {# 좁은 화면에서는 nav가 왼쪽 오프캔버스 패널이 되고 헤더에는 햄버거와 계정
+       표시만 남는다. 링크를 두 벌 렌더하지 않는다 — DOM은 하나고 배치만 CSS가 바꾼다. #}
     <header class="site-header">
+        <button type="button" class="nav-toggle" aria-label="메뉴 열기"
+                aria-expanded="false" aria-controls="site-nav">☰</button>
         <span class="site-logo"><a href="/">EDUTECH - PROTOTYPE</a></span>
-        <nav class="site-nav">
+        <nav class="site-nav" id="site-nav">
             {% if user %}
-            <span>{{ user.name }}님{% if user.role == "admin" %} (admin){% endif %}</span>
+            <a href="/generate">교안 생성</a>
             <a href="/mypage">마이페이지</a>
             {% if user.role == "admin" %}<a href="/admin">관리자</a>{% endif %}
-            {# 페이지별 추가 링크(관리자 화면의 상위 목록 링크 등) #}
-            {% block nav_extra %}{% endblock %}
             <form method="post" action="/logout">
                 <button type="submit">로그아웃</button>
             </form>
@@ -58,7 +97,13 @@
             <a href="/signup">회원가입</a>
             {% endif %}
         </nav>
+        {% if user %}
+        {# 계정 표시는 nav 밖에 둔다 — 사이드바가 열려 있지 않아도 누구로 로그인했는지 보여야 한다. #}
+        <span class="site-account">{{ user.name }}님{% if user.role == "admin" %} (admin){% endif %}</span>
+        {% endif %}
     </header>
+    {# 사이드바가 열렸을 때 뒤를 덮는 막. 눌러서 닫는다. #}
+    <div class="nav-scrim" hidden></div>
     <main>
         {% block content %}{% endblock %}
     </main>

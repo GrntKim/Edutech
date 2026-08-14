@@ -1,13 +1,31 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import pagination %}
 {% block title %}마이페이지 - Edutech{% endblock %}
 {% block content %}
         <h1>생성 히스토리</h1>
+
+        {# 필터 폼은 목록이 비어도 계속 보인다 — 필터 때문에 0건이 됐을 때
+           되돌릴 방법이 있어야 한다. 형태는 admin_chunks.html의 검색 폼과 맞춘다.
+           옵션 값은 영문 enum이 아니라 lesson_output에 저장된 한글 라벨이다. #}
+        <form method="get" action="/mypage" class="info-form">
+            <div>
+                <label for="subject-select">과목</label>
+                <select id="subject-select" name="subject">
+                    <option value="">전체</option>
+                    {% for s in subjects %}
+                    <option value="{{ s }}" {% if subject == s %}selected{% endif %}>{{ s }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit">보기</button>
+        </form>
 
         {% if items %}
         <table class="history-table">
             <thead>
                 <tr>
                     <th>개념</th>
+                    <th>과목</th>
                     <th>학년</th>
                     <th>검증 상태</th>
                     <th>생성 시각</th>
@@ -19,6 +37,9 @@
                 {% for item in items %}
                 <tr>
                     <td>{{ item.concept_name }}</td>
+                    {# dict 접근은 대괄호로 한다(Jinja에서 .items 등은 메서드가 잡힌다).
+                       실패 기록은 lesson_output이 비어 과목 값이 없다. #}
+                    <td>{{ item.lesson_output["subject"] or "-" }}</td>
                     <td>{{ item.target_grade }}학년</td>
                     {# lesson_output이 비면 파이프라인이 조기 종료한 실패 기록이다. #}
                     <td>
@@ -42,16 +63,11 @@
             </tbody>
         </table>
 
-        <div class="pagination">
-            {% if page > 1 %}
-            <a href="/mypage?page={{ page - 1 }}">이전</a>
-            {% endif %}
-            <span>{{ page }} / {{ total_pages }}</span>
-            {% if page < total_pages %}
-            <a href="/mypage?page={{ page + 1 }}">다음</a>
-            {% endif %}
-        </div>
+        {# 과목 필터는 페이지를 넘어가도 유지돼야 한다. #}
+        {{ pagination("/mypage", page, total_pages, {"subject": subject}) }}
+        {% elif subject %}
+        <p>{{ subject }} 과목으로 생성한 교안이 없습니다.</p>
         {% else %}
-        <p>아직 생성한 교안이 없습니다. <a href="/">교안 생성하러 가기</a></p>
+        <p>아직 생성한 교안이 없습니다. <a href="/generate">교안 생성하러 가기</a></p>
         {% endif %}
 {% endblock %}
