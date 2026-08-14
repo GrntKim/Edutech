@@ -32,13 +32,13 @@
                 </div>
                 <div>
                     <label for="grade-select">학년</label>
+                    {# 마이페이지에 담당 학년을 설정해 뒀으면 그 학년이 선택된 채로
+                       열린다. 설정이 없으면 첫 옵션(1학년)이 그대로 선택된다.
+                       여기서 다른 학년을 골라도 설정값은 바뀌지 않는다. #}
                     <select name="grade" id="grade-select" required>
-                        <option value="1">1학년</option>
-                        <option value="2">2학년</option>
-                        <option value="3">3학년</option>
-                        <option value="4">4학년</option>
-                        <option value="5">5학년</option>
-                        <option value="6">6학년</option>
+                        {% for grade in grade_choices %}
+                        <option value="{{ grade }}" {% if user.default_grade == grade %}selected{% endif %}>{{ grade }}학년</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <button type="submit">생성하기</button>

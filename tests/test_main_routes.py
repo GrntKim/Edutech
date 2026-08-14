@@ -52,7 +52,7 @@ LESSON_PLAN = {
 }
 
 
-def _user(role="user") -> User:
+def _user(role="user", default_grade=None) -> User:
     return User(
         id=uuid4(),
         email="a@b.com",
@@ -60,6 +60,7 @@ def _user(role="user") -> User:
         name="테스트",
         role=role,
         created_at=datetime.now(timezone.utc),
+        default_grade=default_grade,
     )
 
 
@@ -884,6 +885,102 @@ def test_mypage_pagination_keeps_subject_filter(client, monkeypatch, user):
     body = client.get("/mypage", params={"subject": "수학"}).text
 
     assert f"subject={quote('수학')}&amp;page=2" in body
+
+
+# ---------- 마이페이지: 담당 학년 기본값 ----------
+
+
+def _stub_empty_history(monkeypatch):
+    monkeypatch.setattr(
+        db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: []
+    )
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: 0)
+
+
+def test_mypage_preselects_saved_default_grade(client, monkeypatch):
+    _stub_empty_history(monkeypatch)
+    main.app.dependency_overrides[auth.get_current_user] = lambda: _user(default_grade=4)
+
+    body = " ".join(client.get("/mypage").text.split())
+
+    assert '<option value="4" selected>4학년</option>' in body
+    assert '<option value="">설정 안 함</option>' in body
+
+
+def test_generate_page_defaults_to_saved_grade(client, monkeypatch):
+    """설정돼 있으면 생성 화면 학년이 그 값으로 열린다."""
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+    user_with_grade = _user(default_grade=6)
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: user_with_grade
+
+    body = " ".join(client.get("/generate").text.split())
+
+    assert '<option value="6" selected>6학년</option>' in body
+    assert "selected" not in body.split('<option value="6"')[0]
+
+
+def test_generate_page_has_no_preselection_without_setting(client, monkeypatch):
+    """설정이 없으면 첫 옵션(1학년)이 선택된 기존 동작 그대로다."""
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    body = client.get("/generate").text
+
+    assert "selected" not in body
+
+
+def test_mypage_settings_saves_grade_and_redirects(client, monkeypatch, user):
+    calls = {}
+    monkeypatch.setattr(
+        db,
+        "update_user_default_grade",
+        lambda user_id, default_grade: calls.update(user_id=user_id, grade=default_grade),
+    )
+
+    response = client.post(
+        "/mypage/settings", data={"default_grade": "3"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/mypage"
+    assert calls == {"user_id": user.id, "grade": 3}
+
+
+def test_mypage_settings_clears_grade_with_empty_value(client, monkeypatch):
+    """"설정 안 함"을 고르면 NULL로 되돌린다."""
+    calls = {}
+    monkeypatch.setattr(
+        db,
+        "update_user_default_grade",
+        lambda user_id, default_grade: calls.update(grade=default_grade),
+    )
+
+    response = client.post(
+        "/mypage/settings", data={"default_grade": ""}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert calls == {"grade": None}
+
+
+@pytest.mark.parametrize("value", ["7", "0", "abc", "3.5"])
+def test_mypage_settings_rejects_out_of_range_grade(client, monkeypatch, value):
+    """폼을 직접 조립한 요청 방어 — CHECK 제약에 닿기 전에 막고 저장도 하지 않는다."""
+    monkeypatch.setattr(
+        db,
+        "update_user_default_grade",
+        lambda user_id, default_grade: pytest.fail(f"잘못된 값이 저장됨: {default_grade}"),
+    )
+
+    response = client.post(
+        "/mypage/settings", data={"default_grade": value}, follow_redirects=False
+    )
+
+    assert response.status_code == 400
+
+
+def test_grade_choices_come_from_grade_band_mapping():
+    """생성 폼과 설정 UI가 같은 근거(학년군 매핑)를 쓴다 — 하드코딩 금지."""
+    assert main.GRADE_CHOICES == (1, 2, 3, 4, 5, 6)
 
 
 def test_to_kst_treats_naive_value_as_utc():
