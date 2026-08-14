@@ -96,6 +96,19 @@ def _ensure_heading_break(text: str, heading: str) -> str:
     return text
 
 
+_MINUTE_PATTERN = re.compile(r"(\d+)\s*분")
+
+
+def _normalize_lesson_time(text: str) -> str:
+    """lesson_time을 "40분" 형태로 통일한다. prompts.py 규칙 12로 LLM에 이미
+    분수 표기를 쓰지 말라고 지시했지만, 프롬프트 지시만으로는 매 생성마다
+    보장되지 않으므로("1/4차시 (40분)", "40분 (1/4차시)" 두 순서 모두 실제
+    생성됨을 확인) 분 단위 숫자만 뽑아 고정 형식으로 되돌린다. 숫자를 못 찾으면
+    원본을 그대로 둔다(빈 문자열 노출보다 낫다)."""
+    match = _MINUTE_PATTERN.search(text)
+    return f"{match.group(1)}분" if match else text
+
+
 def _normalize_dialogue_formatting(content_dict: dict) -> dict:
     """lesson_stages의 모든 StageActivity에 제목 줄 분리(_ensure_heading_break) →
     마커 기반 개행 복구(_ensure_structural_linebreaks) → S 재표기
@@ -168,7 +181,7 @@ def generate_lesson(
     content = GeneratedLessonContent.model_validate(normalized)
 
     return LessonOutput(
-        lesson_time=content.lesson_time,
+        lesson_time=_normalize_lesson_time(content.lesson_time),
         school_level=SCHOOL_LEVEL,
         grade=lesson_input.target_grade,
         topic=content.topic,
