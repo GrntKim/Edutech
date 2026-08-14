@@ -177,6 +177,9 @@ class User(BaseModel):
     name: str
     role: Literal["user", "admin"]
     created_at: datetime
+    # 마이페이지에서 설정하는 담당 학년(초등 1~6). 선택 항목이라 기본은 "설정 안 함".
+    # 생성 화면의 학년 기본 선택에만 쓰이며, 생성 시 다른 학년을 골라도 이 값은 바뀌지 않는다.
+    default_grade: int | None = None
 
 
 # 소유: E(REQ-006)

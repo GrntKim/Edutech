@@ -52,6 +52,10 @@ _CHUNK_COLUMNS = (
     "achievement_code, achievement_text, explanation, inquiry_activities, source_page"
 )
 
+# User(Pydantic)의 전 필드. 같은 목록이 조회 3곳(INSERT RETURNING 포함)에 흩어져
+# 있어서 컬럼이 늘 때마다 하나를 빠뜨리기 쉬웠다 — 한 곳에서만 관리한다.
+_USER_COLUMNS = "id, email, password_hash, name, role, created_at, default_grade"
+
 
 class DatabaseError(Exception):
     """DB 접근 관련 모든 예외의 기반 클래스."""
@@ -351,7 +355,7 @@ def create_user(email: str, password_hash: str, name: str, role: str = "user") -
     query = (
         "INSERT INTO users (email, password_hash, name, role) "
         "VALUES (%s, %s, %s, %s) "
-        "RETURNING id, email, password_hash, name, role, created_at"
+        f"RETURNING {_USER_COLUMNS}"
     )
     try:
         with get_cursor(dict_rows=True) as cur:
@@ -363,7 +367,7 @@ def create_user(email: str, password_hash: str, name: str, role: str = "user") -
 
 
 def get_user_by_email(email: str) -> User | None:
-    query = "SELECT id, email, password_hash, name, role, created_at FROM users WHERE email = %s"
+    query = f"SELECT {_USER_COLUMNS} FROM users WHERE email = %s"
     with get_cursor(dict_rows=True) as cur:
         cur.execute(query, (email,))
         row = cur.fetchone()
@@ -371,9 +375,22 @@ def get_user_by_email(email: str) -> User | None:
 
 
 def get_user_by_id(user_id: UUID) -> User | None:
-    query = "SELECT id, email, password_hash, name, role, created_at FROM users WHERE id = %s"
+    query = f"SELECT {_USER_COLUMNS} FROM users WHERE id = %s"
     with get_cursor(dict_rows=True) as cur:
         cur.execute(query, (user_id,))
+        row = cur.fetchone()
+    return User(**row) if row is not None else None
+
+
+def update_user_default_grade(user_id: UUID, default_grade: int | None) -> User | None:
+    """담당 학년 기본값을 저장한다. None이면 "설정 안 함"으로 되돌린다.
+
+    범위(1~6) 검증은 CHECK 제약(users_default_grade_check)이 최종 방어선이고,
+    호출부에서도 미리 걸러 400으로 돌려준다 — 여기서 예외를 삼키지는 않는다.
+    """
+    query = f"UPDATE users SET default_grade = %s WHERE id = %s RETURNING {_USER_COLUMNS}"
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (default_grade, user_id))
         row = cur.fetchone()
     return User(**row) if row is not None else None
 

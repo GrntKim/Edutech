@@ -2,6 +2,23 @@
 {% from "_pagination.html" import pagination %}
 {% block title %}마이페이지 - Edutech{% endblock %}
 {% block content %}
+        <h1>내 설정</h1>
+
+        {# 선택 사항이다. 설정하면 생성 화면의 학년이 그 값으로 열릴 뿐이고,
+           생성할 때 다른 학년을 골라도 이 설정은 바뀌지 않는다. #}
+        <form method="post" action="/mypage/settings" class="info-form">
+            <div>
+                <label for="default-grade-select">가르치는 학년</label>
+                <select id="default-grade-select" name="default_grade">
+                    <option value="">설정 안 함</option>
+                    {% for grade in grade_choices %}
+                    <option value="{{ grade }}" {% if user.default_grade == grade %}selected{% endif %}>{{ grade }}학년</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit">저장</button>
+        </form>
+
         <h1>생성 히스토리</h1>
 
         {# 필터 폼은 목록이 비어도 계속 보인다 — 필터 때문에 0건이 됐을 때

@@ -28,6 +28,7 @@ from app.agents.lesson_generate.schema import subject_label
 from app.agents.orchestrate import MAX_RETRIES, STAGES, run_pipeline
 from app.lib import auth, db
 from app.lib.types import (
+    GRADE_TO_BANDS,
     ConceptInput,
     LessonRequest,
     PipelineResult,
@@ -60,6 +61,10 @@ PAGINATION_ENDS_THRESHOLD = 5
 # 쓴다. 목록을 하드코딩하지 않고 C의 변환 함수에서 파생한다 — 라벨이 바뀌면
 # 선택지도 따라간다(읽기 전용 import).
 SUBJECT_LABEL_OPTIONS = [subject_label(s) for s in Subject]
+
+# 선택 가능한 학년. 하드코딩하지 않고 학년군 매핑의 키에서 파생한다 — 시스템이
+# 다루는 학년 범위가 바뀌면 생성 폼과 마이페이지 설정이 함께 따라간다.
+GRADE_CHOICES = tuple(sorted(GRADE_TO_BANDS))
 
 # lesson_requests.validation_status에는 PipelineStatus 값이 그대로 들어간다.
 # 화면에는 사람이 읽을 수 있는 문구로 바꿔서 보여준다.
@@ -187,6 +192,7 @@ def generate_form(request: Request, user: User | None = Depends(auth.get_optiona
             "broad_terms": sorted(BROAD_TERMS),
             "min_length": MIN_LENGTH,
             "max_length": MAX_LENGTH,
+            "grade_choices": GRADE_CHOICES,
         },
     )
 
@@ -659,8 +665,33 @@ def mypage(
             "total_pages": total_pages,
             "subject": subject or "",
             "subjects": SUBJECT_LABEL_OPTIONS,
+            "grade_choices": GRADE_CHOICES,
         },
     )
+
+
+@app.post("/mypage/settings")
+def update_mypage_settings(
+    default_grade: str = Form(""),
+    user: User = Depends(auth.get_current_user),
+):
+    """담당 학년 기본값 저장. 빈 값은 "설정 안 함"(NULL)이다.
+
+    폼은 select 하나뿐이라 실패 화면을 따로 두지 않는다 — 정상 저장이든 아니든
+    마이페이지로 돌아간다. 범위를 벗어난 값은 CHECK 제약에 닿기 전에 400으로
+    막는다(직접 조립한 요청 방어).
+    """
+    grade = None
+    if default_grade:
+        try:
+            grade = int(default_grade)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="학년 값이 올바르지 않습니다.")
+        if grade not in GRADE_CHOICES:
+            raise HTTPException(status_code=400, detail="학년 값이 올바르지 않습니다.")
+
+    db.update_user_default_grade(user.id, grade)
+    return RedirectResponse(url="/mypage", status_code=303)
 
 
 def _get_owned_lesson_request(request_id: UUID, user: User):

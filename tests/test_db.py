@@ -470,6 +470,7 @@ def _user_row(**overrides):
         "name": "테스트",
         "role": "user",
         "created_at": datetime.now(timezone.utc),
+        "default_grade": None,
     }
     row.update(overrides)
     return row
@@ -502,6 +503,53 @@ def test_get_user_by_email_returns_none_when_missing(monkeypatch):
     _patch_connect(monkeypatch, _FakeConnection(cursor))
 
     assert db.get_user_by_email("nobody@b.com") is None
+
+
+def test_user_queries_select_default_grade(monkeypatch):
+    """users 조회 3곳(INSERT RETURNING 포함)이 같은 컬럼 목록을 쓴다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_user_row(default_grade=4))
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.get_user_by_email("a@b.com").default_grade == 4
+
+    query, _ = cursor.executed[0]
+    assert "default_grade" in query
+
+
+def test_update_user_default_grade_writes_value(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_user_row(default_grade=3))
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    user = db.update_user_default_grade(user_id, 3)
+
+    query, params = cursor.executed[0]
+    assert "UPDATE users SET default_grade = %s" in query
+    assert params == (3, user_id)
+    assert user.default_grade == 3
+
+
+def test_update_user_default_grade_accepts_none(monkeypatch):
+    """"설정 안 함"은 NULL로 저장된다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_user_row())
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    assert db.update_user_default_grade(user_id, None).default_grade is None
+
+    _query, params = cursor.executed[0]
+    assert params == (None, user_id)
+
+
+def test_update_user_default_grade_returns_none_when_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.update_user_default_grade(uuid4(), 2) is None
 
 
 def test_count_lesson_requests_since_uses_rolling_window(monkeypatch):
