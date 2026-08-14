@@ -114,10 +114,24 @@ templates.env.globals["current_year"] = current_year
 
 @app.get("/", response_class=HTMLResponse)
 def read_root(request: Request, user: User | None = Depends(auth.get_optional_user)):
-    # 비로그인은 폼 자체가 없으므로 한도도 조회하지 않는다(불필요한 DB 왕복 회피).
+    """서비스 소개(웰컴) 화면. 생성 폼은 /generate로 분리돼 있다.
+
+    로그인 여부와 무관하게 같은 소개를 보여주고 CTA만 달라지므로, 여기서는
+    레이트리밋을 조회하지 않는다(배너가 없다).
+    """
+    return templates.TemplateResponse(request, "welcome.html", {"user": user})
+
+
+@app.get("/generate", response_class=HTMLResponse)
+def generate_form(request: Request, user: User | None = Depends(auth.get_optional_user)):
+    """생성 화면. 예전 "/"의 내용이 그대로 여기로 왔다.
+
+    비로그인도 404가 아니라 로그인 안내를 본다 — 폼 자체가 없으므로 한도도
+    조회하지 않는다(불필요한 DB 왕복 회피).
+    """
     rate_status = auth.check_rate_limit(user) if user is not None else None
     return templates.TemplateResponse(
-        request, "index.html", {"user": user, "rate_status": rate_status}
+        request, "generate.html", {"user": user, "rate_status": rate_status}
     )
 
 

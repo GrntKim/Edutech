@@ -528,31 +528,65 @@ def test_download_route_is_gone(client):
     assert client.get("/download/" + "0" * 32 + ".docx").status_code == 404
 
 
+# ---------- 웰컴/생성 화면 분리 ----------
+
+
+def test_root_is_welcome_without_form(client, monkeypatch):
+    """"/"는 소개 페이지다 — 생성 폼도, 남은 횟수 배너도 없다."""
+    monkeypatch.setattr(
+        db, "count_lesson_requests_since", lambda user_id, window: pytest.fail("웰컴이 한도를 조회함")
+    )
+
+    body = client.get("/").text
+
+    assert 'id="generation-form"' not in body
+    assert 'id="rate-limit"' not in body
+
+
+def test_welcome_cta_follows_login_state(client):
+    logged_in = client.get("/").text
+    assert 'href="/generate"' in logged_in
+
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: None
+    anonymous = client.get("/").text
+    assert 'class="cta-btn"' in anonymous
+    assert 'href="/login"' in anonymous
+
+
+def test_generate_page_renders_form(client, monkeypatch):
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    body = client.get("/generate").text
+
+    assert 'id="generation-form"' in body
+    assert 'hx-post="/generate"' in body
+
+
 # ---------- 남은 횟수 배너 ----------
 
 
-def test_index_shows_remaining_counts(client, monkeypatch):
+def test_generate_page_shows_remaining_counts(client, monkeypatch):
     monkeypatch.setattr(
         db, "count_lesson_requests_since", lambda user_id, window: 2 if window.days == 1 else 4
     )
 
-    body = " ".join(client.get("/").text.split())
+    body = " ".join(client.get("/generate").text.split())
 
     # 일 5회 중 2회 사용 → 3회 남음, 주 15회 중 4회 사용 → 11회 남음
     assert "오늘 <strong>3</strong>/5회" in body
     assert "이번 주 <strong>11</strong>/15회" in body
 
 
-def test_index_shows_unlimited_for_admin(client, monkeypatch):
+def test_generate_page_shows_unlimited_for_admin(client, monkeypatch):
     admin = _user(role="admin")
     main.app.dependency_overrides[auth.get_optional_user] = lambda: admin
 
-    body = client.get("/").text
+    body = client.get("/generate").text
 
     assert "무제한" in body
 
 
-def test_index_skips_rate_lookup_when_anonymous(client, monkeypatch):
+def test_generate_page_skips_rate_lookup_when_anonymous(client, monkeypatch):
     """비로그인은 폼이 없으므로 배너도, 한도 조회 DB 왕복도 없어야 한다."""
     main.app.dependency_overrides[auth.get_optional_user] = lambda: None
     monkeypatch.setattr(
@@ -561,7 +595,7 @@ def test_index_skips_rate_lookup_when_anonymous(client, monkeypatch):
         lambda user_id, window: pytest.fail("비로그인인데 한도를 조회함"),
     )
 
-    body = client.get("/").text
+    body = client.get("/generate").text
 
     assert 'id="rate-limit"' not in body
     assert "로그인</a>이 필요합니다" in body
@@ -595,7 +629,7 @@ def test_pages_do_not_use_document_write(client, monkeypatch):
     """
     monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
 
-    for path in ("/", "/login", "/signup"):
+    for path in ("/", "/generate", "/login", "/signup"):
         body = client.get(path).text
         assert "document.write" not in body, path
         assert f"&copy; {main.current_year()} EDUTECH" in body, path

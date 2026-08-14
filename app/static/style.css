@@ -236,6 +236,80 @@ dd {
     margin: 0;
 }
 
+/* ── 웰컴 ───────────────────────────────────── */
+
+/* 소개 페이지는 본문 화면들과 달리 가운데 정렬 한 덩어리로 읽힌다.
+   문구가 아직 확정 전이라 자리 크기만 잡아둔다(welcome.html의 copy 참고). */
+.welcome {
+    text-align: center;
+    padding: var(--space-6) 0;
+}
+
+.welcome-logo {
+    display: inline-block;
+    margin-bottom: var(--space-5);
+    padding: var(--space-3) var(--space-5);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text-faint);
+    font-size: 0.9375rem;
+}
+
+.welcome-slogan {
+    font-size: 1.75rem;
+    margin-bottom: var(--space-4);
+}
+
+.welcome-intro {
+    max-width: 34rem;
+    margin: 0 auto var(--space-6);
+    color: var(--text-muted);
+}
+
+.welcome-features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-4);
+    margin: 0 0 var(--space-6);
+    padding: 0;
+    list-style: none;
+    text-align: left;
+}
+
+.welcome-card {
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-sunken);
+}
+
+.welcome-card h2 {
+    margin: 0 0 var(--space-2);
+    font-size: 1rem;
+}
+
+.welcome-card p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9375rem;
+}
+
+.cta-btn {
+    display: inline-block;
+    padding: 0.625rem 1.75rem;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.cta-btn:hover {
+    background: var(--accent-strong);
+    color: #fff;
+}
+
 /* ── 폼 ─────────────────────────────────────── */
 
 .info-form {
@@ -325,7 +399,7 @@ button:hover {
     border-color: var(--accent-strong);
 }
 
-/* 생성 중에는 버튼이 잠긴다(index.html 스크립트). 눌리지 않는다는 것이 보여야 한다. */
+/* 생성 중에는 버튼이 잠긴다(generate.html 스크립트). 눌리지 않는다는 것이 보여야 한다. */
 button:disabled {
     cursor: not-allowed;
     opacity: 0.55;
@@ -636,6 +710,14 @@ table.history-table td:last-child {
     .site-header {
         position: static;
         align-items: flex-start;
+    }
+
+    .welcome-features {
+        grid-template-columns: 1fr;
+    }
+
+    .welcome-slogan {
+        font-size: 1.375rem;
     }
 
     /* 표를 감쌀 요소를 새로 넣을 수 없으므로 표 자체를 스크롤 영역으로 만든다. */

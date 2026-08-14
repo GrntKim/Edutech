@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{# 서비스 소개 페이지. 로그인 여부와 무관하게 같은 내용을 보여주고, CTA만 달라진다.
+   생성 화면은 /generate로 분리돼 있다.
+
+   문구는 아직 확정되지 않았다. 나중에 통째로 갈아끼울 수 있도록 화면에 나가는
+   텍스트를 전부 아래 copy 한 곳에 모은다 — 템플릿 본문에는 문자열 리터럴을 두지
+   않는다. dict 접근은 대괄호로 한다(Jinja에서 .items/.get 등은 메서드가 잡힌다). #}
+{% set copy = {
+    "logo": "[로고 자리]",
+    "slogan": "한 줄 슬로건이 들어갈 자리입니다",
+    "intro": "서비스 소개 문구가 들어갈 자리입니다. 두세 문장 분량을 예상합니다.",
+    "features": [
+        {"title": "특징 1 제목 자리", "body": "특징을 한두 문장으로 설명하는 자리입니다."},
+        {"title": "특징 2 제목 자리", "body": "특징을 한두 문장으로 설명하는 자리입니다."},
+        {"title": "특징 3 제목 자리", "body": "특징을 한두 문장으로 설명하는 자리입니다."}
+    ],
+    "cta_authenticated": "교안 생성하기",
+    "cta_anonymous": "로그인"
+} %}
+{% block title %}Edutech{% endblock %}
+{% block content %}
+        <section class="welcome">
+            {# PLACEHOLDER: 서비스 로고 — 확정 후 이미지 태그로 교체 #}
+            <div class="welcome-logo">{{ copy["logo"] }}</div>
+
+            {# PLACEHOLDER: 서비스 슬로건 — 확정 후 교체 #}
+            <h1 class="welcome-slogan">{{ copy["slogan"] }}</h1>
+
+            {# PLACEHOLDER: 서비스 소개 문단 — 확정 후 교체 #}
+            <p class="welcome-intro">{{ copy["intro"] }}</p>
+
+            {# PLACEHOLDER: 특징 카드 3개 — 확정 후 교체 #}
+            <ul class="welcome-features">
+                {% for feature in copy["features"] %}
+                <li class="welcome-card">
+                    <h2>{{ feature["title"] }}</h2>
+                    <p>{{ feature["body"] }}</p>
+                </li>
+                {% endfor %}
+            </ul>
+
+            <div class="welcome-cta">
+                {% if user %}
+                <a href="/generate" class="cta-btn">{{ copy["cta_authenticated"] }}</a>
+                {% else %}
+                <a href="/login" class="cta-btn">{{ copy["cta_anonymous"] }}</a>
+                {% endif %}
+            </div>
+        </section>
+{% endblock %}
