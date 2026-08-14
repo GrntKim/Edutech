@@ -97,16 +97,26 @@ def _ensure_heading_break(text: str, heading: str) -> str:
 
 
 _MINUTE_PATTERN = re.compile(r"(\d+)\s*분")
+# "총 160분"/"전체 160분"처럼 이 차시가 아니라 단원 전체 시간을 가리키는
+# 숫자 앞에 붙는 말. 이런 접두어가 붙은 숫자는 이 차시의 배정 시간이 아니므로
+# 건너뛴다(그 뒤에 "40분"처럼 진짜 차시 시간이 따로 있으면 그걸 쓴다).
+_TOTAL_TIME_PREFIX = re.compile(r"(총|전체)\s*$")
 
 
 def _normalize_lesson_time(text: str) -> str:
     """lesson_time을 "40분" 형태로 통일한다. prompts.py 규칙 12로 LLM에 이미
     분수 표기를 쓰지 말라고 지시했지만, 프롬프트 지시만으로는 매 생성마다
     보장되지 않으므로("1/4차시 (40분)", "40분 (1/4차시)" 두 순서 모두 실제
-    생성됨을 확인) 분 단위 숫자만 뽑아 고정 형식으로 되돌린다. 숫자를 못 찾으면
-    원본을 그대로 둔다(빈 문자열 노출보다 낫다)."""
-    match = _MINUTE_PATTERN.search(text)
-    return f"{match.group(1)}분" if match else text
+    생성됨을 확인) 분 단위 숫자만 뽑아 고정 형식으로 되돌린다. "총 160분"처럼
+    단원 전체 시간이 먼저 나오는 경우 그 숫자를 이 차시 시간으로 오인하지
+    않도록 건너뛰고, 그 뒤에 오는 진짜 차시 시간을 쓴다. 분 표기 자체가
+    없으면("1/4차시"처럼 분수만 있는 경우) 규칙 12의 기본값 "40분"으로
+    떨어뜨린다(원본을 그대로 두면 없애려던 분수 표기가 그대로 통과한다)."""
+    for match in _MINUTE_PATTERN.finditer(text):
+        if _TOTAL_TIME_PREFIX.search(text[: match.start()]):
+            continue
+        return f"{match.group(1)}분"
+    return "40분"
 
 
 def _normalize_dialogue_formatting(content_dict: dict) -> dict:
