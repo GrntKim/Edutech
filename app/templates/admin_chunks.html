@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% from "_pagination.html" import pagination %}
 {% block title %}성취기준 관리 - Edutech{% endblock %}
-{% block nav_extra %}<a href="/admin">관리자 대시보드</a>{% endblock %}
 {% block content %}
+        {# 상위 화면으로 가는 링크는 헤더가 아니라 본문에 둔다 — 헤더에 끼워 넣으면
+           이 화면에서만 네비게이션 구성이 달라진다. #}
+        <nav class="breadcrumb"><a href="/admin">관리자</a> / 성취기준 관리</nav>
         <h1>성취기준 관리</h1>
         <p>코드·단원명·성취기준 원문으로 검색해 텍스트 오류(파싱 오류, 오탈자 등)를 직접 수정할 수 있습니다.</p>
 

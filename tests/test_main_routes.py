@@ -570,6 +570,36 @@ def test_download_route_is_gone(client):
     assert client.get("/download/" + "0" * 32 + ".docx").status_code == 404
 
 
+# ---------- 헤더 ----------
+
+
+def test_header_has_accessible_nav_toggle(client):
+    """좁은 화면 사이드바를 여는 버튼 — 스크린리더가 상태를 읽을 수 있어야 한다."""
+    body = client.get("/").text
+
+    assert 'aria-controls="site-nav"' in body
+    assert 'aria-expanded="false"' in body
+    assert 'id="site-nav"' in body
+
+
+def test_header_is_identical_across_pages(client, monkeypatch):
+    """페이지마다 헤더 구성이 달라지면 안 된다(관리자 화면에만 링크가 더 생겼었다)."""
+    admin = _as_admin()
+    # 웰컴("/")은 get_optional_user를 쓴다 — 같은 계정으로 봐야 헤더가 비교된다.
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: admin
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: [])
+    monkeypatch.setattr(db, "count_chunks", lambda **kwargs: 0)
+
+    def header(path: str) -> str:
+        body = client.get(path).text
+        return body[body.index("<header"): body.index("</header>")]
+
+    assert header("/admin/chunks") == header("/")
+    assert header("/admin") == header("/")
+    assert "관리자 대시보드" not in client.get("/admin/chunks").text.split("</header>")[0]
+
+
 # ---------- 웰컴/생성 화면 분리 ----------
 
 

@@ -104,7 +104,6 @@ a:hover {
 
 .site-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     gap: var(--space-4);
     flex-wrap: wrap;
@@ -121,6 +120,20 @@ a:hover {
 .site-logo {
     font-size: 0.95rem;
     letter-spacing: 0.02em;
+    /* 나머지(nav·계정)를 오른쪽으로 민다. */
+    margin-right: auto;
+}
+
+/* 햄버거와 스크림은 좁은 화면 전용이다. */
+.nav-toggle,
+.nav-scrim {
+    display: none;
+}
+
+.site-account {
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: var(--text-muted);
 }
 
 /* 로고만 본문 글자색을 따른다. nav 링크는 기본 링크 색을 유지한다. */
@@ -477,6 +490,13 @@ table.history-table td:last-child {
     white-space: nowrap;
 }
 
+/* 상위 화면으로 가는 링크는 헤더가 아니라 본문 제목 위에 둔다. */
+.breadcrumb {
+    margin-bottom: var(--space-2);
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
 .pagination {
     display: flex;
     align-items: center;
@@ -760,7 +780,71 @@ table.history-table td:last-child {
 
     .site-header {
         position: static;
+        /* 햄버거 · 로고 · 계정이 한 줄에 선다. 링크는 사이드바로 빠진다. */
+        flex-wrap: nowrap;
+        gap: var(--space-3);
+    }
+
+    .nav-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        /* 손가락으로 누를 수 있는 최소 크기. */
+        width: 2.25rem;
+        height: 2.25rem;
+        padding: 0;
+        font-size: 1.125rem;
+        line-height: 1;
+        background: none;
+        border: 1px solid var(--border);
+    }
+
+    .site-logo {
+        font-size: 0.875rem;
+    }
+
+    .site-account {
+        /* 헤더 오른쪽에 계정 표시만 남긴다. */
+        white-space: nowrap;
+        font-size: 0.8125rem;
+    }
+
+    /* 링크 전체가 왼쪽에서 밀려 나오는 패널로 들어간다. */
+    .site-nav {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        z-index: 40;
+        width: min(78vw, 17rem);
+        flex-direction: column;
         align-items: flex-start;
+        flex-wrap: nowrap;
+        row-gap: var(--space-4);
+        padding: var(--space-6) var(--space-4);
+        background: var(--bg);
+        border-right: 1px solid var(--border);
+        font-size: 1rem;
+        overflow-y: auto;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+    }
+
+    body.nav-open .site-nav {
+        transform: translateX(0);
+    }
+
+    .nav-scrim {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        background: rgba(0, 0, 0, 0.35);
+    }
+
+    /* 닫힌 상태는 hidden 속성으로 표시한다 — display를 덮어써야 실제로 사라진다. */
+    .nav-scrim[hidden] {
+        display: none;
     }
 
     .welcome-features {
@@ -793,6 +877,7 @@ table.history-table td:last-child {
 /* 교안을 그대로 인쇄하는 경우가 많다. 화면 껍데기는 종이에 남기지 않는다. */
 @media print {
     .site-header,
+    .nav-scrim,
     .site-footer,
     #page-progress,
     .gen-progress,
@@ -825,5 +910,10 @@ table.history-table td:last-child {
     /* 막대는 애니메이션 없이 현재 값으로 바로 선다(width는 그대로 유지된다). */
     .gen-bar-fill {
         animation: none;
+    }
+
+    /* 사이드바는 미끄러지지 않고 바로 나타난다. */
+    .site-nav {
+        transition: none;
     }
 }
