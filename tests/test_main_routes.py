@@ -915,8 +915,10 @@ def test_generate_page_defaults_to_saved_grade(client, monkeypatch):
 
     body = " ".join(client.get("/generate").text.split())
 
-    assert '<option value="6" selected>6학년</option>' in body
+    # 왜 미리 골라져 있는지 보이게 표시한다.
+    assert '<option value="6" selected>6학년 (기본 설정)</option>' in body
     assert "selected" not in body.split('<option value="6"')[0]
+    assert "기본 설정" not in body.split('<option value="6"')[0]
 
 
 def test_generate_page_has_no_preselection_without_setting(client, monkeypatch):
