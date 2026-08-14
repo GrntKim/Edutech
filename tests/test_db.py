@@ -470,6 +470,7 @@ def _user_row(**overrides):
         "name": "테스트",
         "role": "user",
         "created_at": datetime.now(timezone.utc),
+        "default_grade": None,
     }
     row.update(overrides)
     return row
@@ -504,6 +505,53 @@ def test_get_user_by_email_returns_none_when_missing(monkeypatch):
     assert db.get_user_by_email("nobody@b.com") is None
 
 
+def test_user_queries_select_default_grade(monkeypatch):
+    """users 조회 3곳(INSERT RETURNING 포함)이 같은 컬럼 목록을 쓴다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_user_row(default_grade=4))
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.get_user_by_email("a@b.com").default_grade == 4
+
+    query, _ = cursor.executed[0]
+    assert "default_grade" in query
+
+
+def test_update_user_default_grade_writes_value(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_user_row(default_grade=3))
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    user = db.update_user_default_grade(user_id, 3)
+
+    query, params = cursor.executed[0]
+    assert "UPDATE users SET default_grade = %s" in query
+    assert params == (3, user_id)
+    assert user.default_grade == 3
+
+
+def test_update_user_default_grade_accepts_none(monkeypatch):
+    """"설정 안 함"은 NULL로 저장된다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=_user_row())
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    assert db.update_user_default_grade(user_id, None).default_grade is None
+
+    _query, params = cursor.executed[0]
+    assert params == (None, user_id)
+
+
+def test_update_user_default_grade_returns_none_when_missing(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result=None)
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+
+    assert db.update_user_default_grade(uuid4(), 2) is None
+
+
 def test_count_lesson_requests_since_uses_rolling_window(monkeypatch):
     _set_valid_env(monkeypatch)
     cursor = _FakeCursor(fetchone_result={"n": 3})
@@ -530,6 +578,63 @@ def test_list_lesson_requests_orders_desc_and_paginates(monkeypatch):
     query, params = cursor.executed[0]
     assert "ORDER BY created_at DESC" in query
     assert params == (user_id, 10, 20)
+
+
+def test_oldest_lesson_request_since_uses_same_window_condition(monkeypatch):
+    """리셋 시각의 근거가 되는 행은 카운트 대상과 같아야 한다(soft-delete 포함)."""
+    _set_valid_env(monkeypatch)
+    oldest = datetime(2026, 8, 14, 3, 0, tzinfo=timezone.utc)
+    cursor = _FakeCursor(fetchone_result={"oldest": oldest})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    assert db.oldest_lesson_request_since(user_id, timedelta(days=1)) == oldest
+
+    query, params = cursor.executed[0]
+    assert "min(created_at)" in query
+    assert "created_at > now() - %s" in query
+    assert "deleted_at" not in query
+    assert params == (user_id, timedelta(days=1))
+
+
+def test_list_lesson_requests_filters_by_subject(monkeypatch):
+    """과목은 별도 컬럼이 아니라 lesson_output(jsonb) 안의 한글 라벨이다."""
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchall_result=[])
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    db.list_lesson_requests(user_id, limit=10, offset=0, subject="수학")
+
+    query, params = cursor.executed[0]
+    assert "lesson_output->>'subject' = %s" in query
+    assert params == (user_id, "수학", 10, 0)
+
+
+def test_count_lesson_requests_filters_by_subject(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 2})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    assert db.count_lesson_requests(user_id, subject="과학") == 2
+
+    query, params = cursor.executed[0]
+    assert "lesson_output->>'subject' = %s" in query
+    assert params == (user_id, "과학")
+
+
+def test_count_lesson_requests_without_subject_has_no_filter(monkeypatch):
+    _set_valid_env(monkeypatch)
+    cursor = _FakeCursor(fetchone_result={"n": 7})
+    _patch_connect(monkeypatch, _FakeConnection(cursor))
+    user_id = uuid4()
+
+    assert db.count_lesson_requests(user_id) == 7
+
+    query, params = cursor.executed[0]
+    assert "lesson_output" not in query
+    assert params == (user_id,)
 
 
 def test_get_lesson_request_by_id_returns_none_when_missing(monkeypatch):

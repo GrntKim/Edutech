@@ -25,6 +25,9 @@ BCRYPT_ROUNDS = 12
 
 DAILY_LIMIT = 5
 WEEKLY_LIMIT = 15
+# 롤링 윈도우 폭. 리셋 시각 계산도 같은 값을 써야 카운트와 어긋나지 않는다.
+DAILY_WINDOW = timedelta(days=1)
+WEEKLY_WINDOW = timedelta(days=7)
 
 
 def hash_password(password: str) -> str:
@@ -125,8 +128,8 @@ def check_rate_limit(user: User) -> RateLimitStatus:
             weekly_limit=WEEKLY_LIMIT,
         )
 
-    daily_used = db.count_lesson_requests_since(user.id, timedelta(days=1))
-    weekly_used = db.count_lesson_requests_since(user.id, timedelta(days=7))
+    daily_used = db.count_lesson_requests_since(user.id, DAILY_WINDOW)
+    weekly_used = db.count_lesson_requests_since(user.id, WEEKLY_WINDOW)
     allowed = daily_used < DAILY_LIMIT and weekly_used < WEEKLY_LIMIT
     return RateLimitStatus(
         allowed=allowed,
@@ -134,4 +137,18 @@ def check_rate_limit(user: User) -> RateLimitStatus:
         daily_limit=DAILY_LIMIT,
         weekly_used=weekly_used,
         weekly_limit=WEEKLY_LIMIT,
+        daily_reset_at=_next_reset_at(user, DAILY_WINDOW, daily_used),
+        weekly_reset_at=_next_reset_at(user, WEEKLY_WINDOW, weekly_used),
     )
+
+
+def _next_reset_at(user: User, window: timedelta, used: int) -> datetime | None:
+    """윈도우 안 가장 오래된 요청이 빠져나가는 시각 = 다음 1회가 회복되는 시각.
+
+    사용량이 0이면 조회 자체를 건너뛴다 — 회복될 것이 없고, 배너에도 표시하지
+    않으므로 불필요한 DB 왕복이다.
+    """
+    if used == 0:
+        return None
+    oldest = db.oldest_lesson_request_since(user.id, window)
+    return oldest + window if oldest is not None else None

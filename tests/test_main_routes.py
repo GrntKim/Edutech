@@ -7,14 +7,15 @@
 """
 
 import re
-from datetime import datetime, timezone
-from urllib.parse import unquote
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote, unquote
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import main
+from app.agents.concept_collect import logic as concept_logic
 from app.lib import auth, db
 from app.lib.types import (
     ConceptInput,
@@ -51,7 +52,7 @@ LESSON_PLAN = {
 }
 
 
-def _user(role="user") -> User:
+def _user(role="user", default_grade=None) -> User:
     return User(
         id=uuid4(),
         email="a@b.com",
@@ -59,6 +60,7 @@ def _user(role="user") -> User:
         name="테스트",
         role=role,
         created_at=datetime.now(timezone.utc),
+        default_grade=default_grade,
     )
 
 
@@ -89,6 +91,16 @@ def client(user):
     with TestClient(main.app, raise_server_exceptions=False) as test_client:
         yield test_client
     main.app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_reset_lookup(monkeypatch):
+    """레이트리밋 리셋 시각 조회는 기본적으로 막는다(테스트가 실제 DB로 나가지 않게).
+
+    사용량이 0이면 auth가 조회 자체를 건너뛰지만, 사용량을 흉내 내는 테스트는
+    이 스텁이 없으면 .env를 타고 진짜 DB에 붙는다.
+    """
+    monkeypatch.setattr(db, "oldest_lesson_request_since", lambda user_id, window: None)
 
 
 @pytest.fixture(autouse=True)
@@ -245,6 +257,47 @@ def test_generate_records_success_once(client, monkeypatch, saved_rows):
     # 다운로드 링크는 저장된 행을 가리킨다 — 임시파일 경로(/download/...)가 아니다.
     assert "/redownload" in response.text
     assert "/download/" not in response.text
+
+
+def test_success_fragment_hides_form_and_offers_reset(client, monkeypatch, saved_rows):
+    """교안이 나오면 위쪽 폼을 OOB로 비우고, 상단 액션 바에 새로 생성을 둔다."""
+    monkeypatch.setattr(
+        main,
+        "run_pipeline",
+        lambda concept_input, on_stage=None: PipelineResult(
+            lesson_plan=LESSON_PLAN,
+            validation=ValidationResult(passed=True),
+            status=PipelineStatus.SUCCESS,
+            warning=None,
+        ),
+    )
+
+    _post, response = _generate(client, concept="이미지 인식", grade=5)
+    body = " ".join(response.text.split())
+
+    assert '<div id="generate-form" hx-swap-oob="true"></div>' in body
+    assert 'class="regen-btn"' in body
+    # 다운로드는 제목 위 액션 바 안에 있어야 한다.
+    assert body.index("download-btn") < body.index("<h1>교수학습과정안</h1>")
+
+
+def test_failure_fragment_keeps_form(client, monkeypatch, saved_rows):
+    """교안 없이 안내만 나오는 경우에는 폼을 남긴다 — 바로 다시 시도해야 한다."""
+    monkeypatch.setattr(
+        main,
+        "run_pipeline",
+        lambda concept_input, on_stage=None: PipelineResult(
+            lesson_plan={},
+            validation=ValidationResult(passed=False),
+            status=PipelineStatus.UNSUPPORTED_CONCEPT,
+            warning="AI 개념이 아닙니다",
+        ),
+    )
+
+    _post, response = _generate(client, concept="김치찌개", grade=5)
+
+    assert 'id="generate-form"' not in response.text
+    assert "regen-btn" not in response.text
 
 
 def test_generate_passes_form_values_to_pipeline(client, monkeypatch, saved_rows):
@@ -528,31 +581,159 @@ def test_download_route_is_gone(client):
     assert client.get("/download/" + "0" * 32 + ".docx").status_code == 404
 
 
+# ---------- 헤더 ----------
+
+
+def test_header_has_accessible_nav_toggle(client):
+    """좁은 화면 사이드바를 여는 버튼 — 스크린리더가 상태를 읽을 수 있어야 한다."""
+    body = client.get("/").text
+
+    assert 'aria-controls="site-nav"' in body
+    assert 'aria-expanded="false"' in body
+    assert 'id="site-nav"' in body
+
+
+def test_header_is_identical_across_pages(client, monkeypatch):
+    """페이지마다 헤더 구성이 달라지면 안 된다(관리자 화면에만 링크가 더 생겼었다)."""
+    admin = _as_admin()
+    # 웰컴("/")은 get_optional_user를 쓴다 — 같은 계정으로 봐야 헤더가 비교된다.
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: admin
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: [])
+    monkeypatch.setattr(db, "count_chunks", lambda **kwargs: 0)
+
+    def header(path: str) -> str:
+        body = client.get(path).text
+        return body[body.index("<header"): body.index("</header>")]
+
+    assert header("/admin/chunks") == header("/")
+    assert header("/admin") == header("/")
+    assert "관리자 대시보드" not in client.get("/admin/chunks").text.split("</header>")[0]
+
+
+# ---------- 웰컴/생성 화면 분리 ----------
+
+
+def test_root_is_welcome_without_form(client, monkeypatch):
+    """"/"는 소개 페이지다 — 생성 폼도, 남은 횟수 배너도 없다."""
+    monkeypatch.setattr(
+        db, "count_lesson_requests_since", lambda user_id, window: pytest.fail("웰컴이 한도를 조회함")
+    )
+
+    body = client.get("/").text
+
+    assert 'id="generation-form"' not in body
+    assert 'id="rate-limit"' not in body
+
+
+def test_welcome_cta_follows_login_state(client):
+    logged_in = client.get("/").text
+    assert 'href="/generate"' in logged_in
+
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: None
+    anonymous = client.get("/").text
+    assert 'class="cta-btn"' in anonymous
+    assert 'href="/login"' in anonymous
+
+
+def test_generate_page_renders_form(client, monkeypatch):
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    body = client.get("/generate").text
+
+    assert 'id="generation-form"' in body
+    assert 'hx-post="/generate"' in body
+
+
+def test_generate_page_help_uses_agent_constants(client, monkeypatch):
+    """거부 조건 안내는 A1의 상수에서 파생한다 — 화면에 숫자를 박아두지 않는다."""
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    body = client.get("/generate").text
+
+    assert f"{concept_logic.MIN_LENGTH}~{concept_logic.MAX_LENGTH}자" in body
+    for term in concept_logic.BROAD_TERMS:
+        assert term in body
+    assert "생성 횟수는 차감되지 않습니다" in body
+
+
 # ---------- 남은 횟수 배너 ----------
 
 
-def test_index_shows_remaining_counts(client, monkeypatch):
+def test_generate_page_shows_remaining_counts(client, monkeypatch):
     monkeypatch.setattr(
         db, "count_lesson_requests_since", lambda user_id, window: 2 if window.days == 1 else 4
     )
 
-    body = " ".join(client.get("/").text.split())
+    body = " ".join(client.get("/generate").text.split())
 
     # 일 5회 중 2회 사용 → 3회 남음, 주 15회 중 4회 사용 → 11회 남음
     assert "오늘 <strong>3</strong>/5회" in body
     assert "이번 주 <strong>11</strong>/15회" in body
 
 
-def test_index_shows_unlimited_for_admin(client, monkeypatch):
+def test_banner_shows_when_limits_recover(client, monkeypatch):
+    """롤링 윈도우라 자정 초기화가 아니다 — 언제 1회 회복되는지 알려준다."""
+    oldest = datetime.now(timezone.utc) - timedelta(hours=21)
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 2)
+    monkeypatch.setattr(db, "oldest_lesson_request_since", lambda user_id, window: oldest)
+
+    body = " ".join(client.get("/generate").text.split())
+
+    # 일 윈도우(24h)는 3시간 뒤, 주 윈도우(7d)는 6일 뒤에 가장 오래된 행이 빠진다.
+    assert "일 한도 약 3시간 뒤 1회 회복" in body
+    assert "주 한도 약 7일 뒤 1회 회복" in body
+
+
+def test_banner_omits_reset_when_unused(client, monkeypatch):
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    body = client.get("/generate").text
+
+    assert "회복" not in body
+
+
+def test_rate_limit_block_message_names_blocking_window(client, monkeypatch, saved_rows):
+    """일 한도로 막혔으면 일 한도 회복 시각만 말한다 — 주 한도 시각은 훨씬 멀다."""
+    oldest = datetime.now(timezone.utc) - timedelta(hours=22)
+    monkeypatch.setattr(
+        db, "count_lesson_requests_since", lambda user_id, window: 5 if window.days == 1 else 6
+    )
+    monkeypatch.setattr(db, "oldest_lesson_request_since", lambda user_id, window: oldest)
+
+    response = client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+
+    assert response.status_code == 429
+    assert "일 한도는 약 2시간 뒤 1회 회복됩니다." in response.text
+    assert "주 한도" not in response.text
+
+
+def test_until_label_rounds_up_by_unit():
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+
+    assert main.until_label(now + timedelta(minutes=59), now) == "약 59분 뒤"
+    assert main.until_label(now + timedelta(hours=2, minutes=1), now) == "약 3시간 뒤"
+    assert main.until_label(now + timedelta(days=2, hours=1), now) == "약 3일 뒤"
+    # 이미 지난 시각은 다음 조회에서 카운트가 빠진다 — 음수 시간을 보여주지 않는다.
+    assert main.until_label(now - timedelta(minutes=5), now) == "곧"
+
+
+def test_until_label_treats_naive_value_as_utc():
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+
+    assert main.until_label(datetime(2026, 8, 14, 14, 0), now) == "약 2시간 뒤"
+
+
+def test_generate_page_shows_unlimited_for_admin(client, monkeypatch):
     admin = _user(role="admin")
     main.app.dependency_overrides[auth.get_optional_user] = lambda: admin
 
-    body = client.get("/").text
+    body = client.get("/generate").text
 
     assert "무제한" in body
 
 
-def test_index_skips_rate_lookup_when_anonymous(client, monkeypatch):
+def test_generate_page_skips_rate_lookup_when_anonymous(client, monkeypatch):
     """비로그인은 폼이 없으므로 배너도, 한도 조회 DB 왕복도 없어야 한다."""
     main.app.dependency_overrides[auth.get_optional_user] = lambda: None
     monkeypatch.setattr(
@@ -561,7 +742,7 @@ def test_index_skips_rate_lookup_when_anonymous(client, monkeypatch):
         lambda user_id, window: pytest.fail("비로그인인데 한도를 조회함"),
     )
 
-    body = client.get("/").text
+    body = client.get("/generate").text
 
     assert 'id="rate-limit"' not in body
     assert "로그인</a>이 필요합니다" in body
@@ -595,7 +776,7 @@ def test_pages_do_not_use_document_write(client, monkeypatch):
     """
     monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
 
-    for path in ("/", "/login", "/signup"):
+    for path in ("/", "/generate", "/login", "/signup"):
         body = client.get(path).text
         assert "document.write" not in body, path
         assert f"&copy; {main.current_year()} EDUTECH" in body, path
@@ -617,8 +798,8 @@ def test_mypage_marks_failed_rows(client, monkeypatch, user):
         _lesson_request(user.id, LESSON_PLAN, validation_status="passed"),
         _lesson_request(user.id, {}, validation_status="검색 결과가 없습니다"),
     ]
-    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset: rows)
-    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id: len(rows))
+    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: rows)
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: len(rows))
 
     body = client.get("/mypage").text
 
@@ -635,14 +816,173 @@ def test_created_at_is_shown_in_kst(client, monkeypatch, user):
     """
     row = _lesson_request(user.id, LESSON_PLAN)
     row.created_at = datetime(2026, 8, 13, 5, 23, tzinfo=timezone.utc)
-    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset: [row])
-    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id: 1)
+    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: [row])
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: 1)
     monkeypatch.setattr(db, "get_lesson_request_by_id", lambda request_id: row)
 
     for path in ("/mypage", f"/mypage/requests/{row.id}"):
         body = client.get(path).text
         assert "2026-08-13 14:23" in body, path
         assert "2026-08-13 05:23" not in body, path
+
+
+def test_mypage_shows_subject_column(client, monkeypatch, user):
+    """과목은 lesson_output에 저장된 값을 그대로 보여준다. 실패 기록은 값이 없어 "-"."""
+    rows = [
+        _lesson_request(user.id, LESSON_PLAN),
+        _lesson_request(user.id, {}, validation_status="no_curriculum_match"),
+    ]
+    monkeypatch.setattr(
+        db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: rows
+    )
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: len(rows))
+
+    body = client.get("/mypage").text
+
+    assert "<td>실과</td>" in body
+    assert "<td>-</td>" in body
+
+
+def test_mypage_passes_subject_filter_to_db(client, monkeypatch, user):
+    calls = {}
+
+    def fake_list(user_id, limit, offset, subject=None):
+        calls["subject"] = subject
+        return []
+
+    monkeypatch.setattr(db, "list_lesson_requests", fake_list)
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: 0)
+
+    body = client.get("/mypage", params={"subject": "수학"}).text
+
+    assert calls["subject"] == "수학"
+    # 결과가 0건이어도 필터 폼은 남아 있어야 되돌아올 수 있다.
+    assert 'name="subject"' in body
+
+
+def test_mypage_subject_options_come_from_labels(client, monkeypatch):
+    """옵션은 하드코딩이 아니라 C의 subject_label()에서 파생한다."""
+    monkeypatch.setattr(
+        db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: []
+    )
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: 0)
+
+    body = client.get("/mypage").text
+
+    for label in main.SUBJECT_LABEL_OPTIONS:
+        assert f'<option value="{label}"' in body
+
+
+def test_mypage_pagination_keeps_subject_filter(client, monkeypatch, user):
+    rows = [_lesson_request(user.id, LESSON_PLAN)]
+    monkeypatch.setattr(
+        db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: rows
+    )
+    monkeypatch.setattr(
+        db, "count_lesson_requests", lambda user_id, subject=None: main.MYPAGE_PAGE_SIZE * 3
+    )
+
+    body = client.get("/mypage", params={"subject": "수학"}).text
+
+    assert f"subject={quote('수학')}&amp;page=2" in body
+
+
+# ---------- 마이페이지: 담당 학년 기본값 ----------
+
+
+def _stub_empty_history(monkeypatch):
+    monkeypatch.setattr(
+        db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: []
+    )
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: 0)
+
+
+def test_mypage_preselects_saved_default_grade(client, monkeypatch):
+    _stub_empty_history(monkeypatch)
+    main.app.dependency_overrides[auth.get_current_user] = lambda: _user(default_grade=4)
+
+    body = " ".join(client.get("/mypage").text.split())
+
+    assert '<option value="4" selected>4학년</option>' in body
+    assert '<option value="">설정 안 함</option>' in body
+
+
+def test_generate_page_defaults_to_saved_grade(client, monkeypatch):
+    """설정돼 있으면 생성 화면 학년이 그 값으로 열린다."""
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+    user_with_grade = _user(default_grade=6)
+    main.app.dependency_overrides[auth.get_optional_user] = lambda: user_with_grade
+
+    body = " ".join(client.get("/generate").text.split())
+
+    # 왜 미리 골라져 있는지 보이게 표시한다.
+    assert '<option value="6" selected>6학년 (기본 설정)</option>' in body
+    assert "selected" not in body.split('<option value="6"')[0]
+    assert "기본 설정" not in body.split('<option value="6"')[0]
+
+
+def test_generate_page_has_no_preselection_without_setting(client, monkeypatch):
+    """설정이 없으면 첫 옵션(1학년)이 선택된 기존 동작 그대로다."""
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    body = client.get("/generate").text
+
+    assert "selected" not in body
+
+
+def test_mypage_settings_saves_grade_and_redirects(client, monkeypatch, user):
+    calls = {}
+    monkeypatch.setattr(
+        db,
+        "update_user_default_grade",
+        lambda user_id, default_grade: calls.update(user_id=user_id, grade=default_grade),
+    )
+
+    response = client.post(
+        "/mypage/settings", data={"default_grade": "3"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/mypage"
+    assert calls == {"user_id": user.id, "grade": 3}
+
+
+def test_mypage_settings_clears_grade_with_empty_value(client, monkeypatch):
+    """"설정 안 함"을 고르면 NULL로 되돌린다."""
+    calls = {}
+    monkeypatch.setattr(
+        db,
+        "update_user_default_grade",
+        lambda user_id, default_grade: calls.update(grade=default_grade),
+    )
+
+    response = client.post(
+        "/mypage/settings", data={"default_grade": ""}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert calls == {"grade": None}
+
+
+@pytest.mark.parametrize("value", ["7", "0", "abc", "3.5"])
+def test_mypage_settings_rejects_out_of_range_grade(client, monkeypatch, value):
+    """폼을 직접 조립한 요청 방어 — CHECK 제약에 닿기 전에 막고 저장도 하지 않는다."""
+    monkeypatch.setattr(
+        db,
+        "update_user_default_grade",
+        lambda user_id, default_grade: pytest.fail(f"잘못된 값이 저장됨: {default_grade}"),
+    )
+
+    response = client.post(
+        "/mypage/settings", data={"default_grade": value}, follow_redirects=False
+    )
+
+    assert response.status_code == 400
+
+
+def test_grade_choices_come_from_grade_band_mapping():
+    """생성 폼과 설정 UI가 같은 근거(학년군 매핑)를 쓴다 — 하드코딩 금지."""
+    assert main.GRADE_CHOICES == (1, 2, 3, 4, 5, 6)
 
 
 def test_to_kst_treats_naive_value_as_utc():
@@ -656,8 +996,8 @@ def test_mypage_renders_status_code_as_label(client, monkeypatch, user):
         _lesson_request(user.id, LESSON_PLAN, validation_status="success"),
         _lesson_request(user.id, {}, validation_status="no_curriculum_match"),
     ]
-    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset: rows)
-    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id: len(rows))
+    monkeypatch.setattr(db, "list_lesson_requests", lambda user_id, limit, offset, subject=None: rows)
+    monkeypatch.setattr(db, "count_lesson_requests", lambda user_id, subject=None: len(rows))
 
     body = client.get("/mypage").text
 
@@ -737,6 +1077,37 @@ def test_admin_chunks_passes_query_and_subject_to_db(client, monkeypatch):
     assert calls["query"] == "분류"
     assert calls["subject"] == Subject.SCIENCE
     assert calls["offset"] == main.ADMIN_CHUNKS_PAGE_SIZE  # page=2 → 두 번째 페이지 offset
+
+
+def test_pagination_shows_ends_only_beyond_threshold(client, monkeypatch):
+    """페이지가 몇 장 안 되면 이전/다음만, 임계값을 넘으면 처음/마지막도 나온다."""
+    _as_admin()
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: [_chunk()])
+
+    def body_for(total_pages: int) -> str:
+        monkeypatch.setattr(
+            db, "count_chunks", lambda **kwargs: main.ADMIN_CHUNKS_PAGE_SIZE * total_pages
+        )
+        return client.get("/admin/chunks", params={"page": 2}).text
+
+    under = body_for(main.PAGINATION_ENDS_THRESHOLD)
+    assert "처음" not in under
+    assert "마지막" not in under
+
+    over = body_for(main.PAGINATION_ENDS_THRESHOLD + 1)
+    assert "처음" in over
+    assert "마지막" in over
+
+
+def test_pagination_preserves_filters_in_links(client, monkeypatch):
+    """페이지를 넘어가도 검색어·과목 필터가 유지돼야 한다."""
+    _as_admin()
+    monkeypatch.setattr(db, "search_chunks", lambda **kwargs: [_chunk()])
+    monkeypatch.setattr(db, "count_chunks", lambda **kwargs: main.ADMIN_CHUNKS_PAGE_SIZE * 3)
+
+    body = client.get("/admin/chunks", params={"q": "분류", "subject": "SCIENCE"}).text
+
+    assert f"q={quote('분류')}&amp;subject=SCIENCE&amp;page=2" in body
 
 
 def test_admin_chunks_clamps_page_beyond_total_pages(client, monkeypatch):

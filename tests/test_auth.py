@@ -137,6 +137,15 @@ def test_require_admin_allows_admin():
 # ---------- check_rate_limit ----------
 
 
+@pytest.fixture(autouse=True)
+def no_reset_lookup(monkeypatch):
+    """리셋 시각 조회는 기본적으로 막는다 — 필요한 테스트가 개별로 덮어쓴다.
+
+    스텁이 없으면 실제 DB로 나간다(.env가 있으면 조용히 성공해버려 더 위험하다).
+    """
+    monkeypatch.setattr(db, "oldest_lesson_request_since", lambda user_id, window: None)
+
+
 def test_check_rate_limit_admin_always_allowed(monkeypatch):
     monkeypatch.setattr(
         db, "count_lesson_requests_since", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("admin은 카운트 쿼리도 스킵해야 함"))
@@ -169,3 +178,37 @@ def test_check_rate_limit_allows_under_both_limits(monkeypatch):
     )
     status = auth.check_rate_limit(_user())
     assert status.allowed is True
+
+
+def test_check_rate_limit_reports_window_reset_times(monkeypatch):
+    """롤링 윈도우라 리셋 시각 = 윈도우 안 가장 오래된 요청 + 윈도우 폭."""
+    oldest = datetime(2026, 8, 14, 3, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 2)
+    monkeypatch.setattr(db, "oldest_lesson_request_since", lambda user_id, window: oldest)
+
+    status = auth.check_rate_limit(_user())
+
+    assert status.daily_reset_at == oldest + timedelta(days=1)
+    assert status.weekly_reset_at == oldest + timedelta(days=7)
+
+
+def test_check_rate_limit_skips_reset_lookup_when_unused(monkeypatch):
+    """한 번도 안 썼으면 회복될 것이 없다 — 조회도 하지 않는다."""
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+    monkeypatch.setattr(
+        db,
+        "oldest_lesson_request_since",
+        lambda user_id, window: pytest.fail("사용량이 0인데 리셋 시각을 조회함"),
+    )
+
+    status = auth.check_rate_limit(_user())
+
+    assert status.daily_reset_at is None
+    assert status.weekly_reset_at is None
+
+
+def test_check_rate_limit_admin_has_no_reset_times():
+    status = auth.check_rate_limit(_user(role="admin"))
+
+    assert status.daily_reset_at is None
+    assert status.weekly_reset_at is None

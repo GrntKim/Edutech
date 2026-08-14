@@ -9,6 +9,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import ceil
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import quote
@@ -19,10 +20,15 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+# 읽기 전용 import. 개념 입력 안내에 쓰는 거부 조건 수치를 A1의 정의에서 그대로
+# 가져온다 — 화면에 하드코딩하면 A1이 값을 바꿨을 때 안내만 조용히 어긋난다.
+from app.agents.concept_collect.logic import BROAD_TERMS, MAX_LENGTH, MIN_LENGTH
 from app.agents.lesson_generate import LessonOutput, render_lesson_docx
+from app.agents.lesson_generate.schema import subject_label
 from app.agents.orchestrate import MAX_RETRIES, STAGES, run_pipeline
 from app.lib import auth, db
 from app.lib.types import (
+    GRADE_TO_BANDS,
     ConceptInput,
     LessonRequest,
     PipelineResult,
@@ -43,6 +49,22 @@ DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 
 MYPAGE_PAGE_SIZE = 10
 ADMIN_CHUNKS_PAGE_SIZE = 20
+
+# 총 페이지가 이 값을 넘으면 페이지네이션에 «처음»/«마지막»을 함께 보여준다.
+# 이하일 때는 이전/다음만으로 충분하다(_pagination.html).
+PAGINATION_ENDS_THRESHOLD = 5
+
+# 마이페이지 과목 필터의 선택지.
+#
+# lesson_output에는 영문 enum이 아니라 C가 변환해 넣은 한글 라벨이 저장돼 있어
+# (LessonOutput.subject = subject_label(MappingResult.subject)), 필터 값도 라벨을
+# 쓴다. 목록을 하드코딩하지 않고 C의 변환 함수에서 파생한다 — 라벨이 바뀌면
+# 선택지도 따라간다(읽기 전용 import).
+SUBJECT_LABEL_OPTIONS = [subject_label(s) for s in Subject]
+
+# 선택 가능한 학년. 하드코딩하지 않고 학년군 매핑의 키에서 파생한다 — 시스템이
+# 다루는 학년 범위가 바뀌면 생성 폼과 마이페이지 설정이 함께 따라간다.
+GRADE_CHOICES = tuple(sorted(GRADE_TO_BANDS))
 
 # lesson_requests.validation_status에는 PipelineStatus 값이 그대로 들어간다.
 # 화면에는 사람이 읽을 수 있는 문구로 바꿔서 보여준다.
@@ -95,6 +117,33 @@ def to_kst(value: datetime, fmt: str = "%Y-%m-%d %H:%M") -> str:
 templates.env.filters["kst"] = to_kst
 
 
+def until_label(target: datetime, now: datetime | None = None) -> str:
+    """지금부터 target까지 남은 시간을 사람이 읽는 대략치로 바꾼다.
+
+    레이트리밋은 롤링 윈도우라 "내일 자정에 초기화"처럼 고정된 시점이 없다 —
+    가장 오래된 요청이 윈도우를 벗어날 때 1회씩 회복된다. 그래서 절대 시각보다
+    "약 몇 시간 뒤"가 사용자에게 쓸모 있는 정보다.
+
+    올림한다 — 59분 남았는데 "0시간 뒤"로 보이면 안 된다. tz가 없는 값은 UTC로
+    간주한다(to_kst와 같은 규약).
+    """
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    remaining = target - (now or datetime.now(timezone.utc))
+
+    seconds = remaining.total_seconds()
+    if seconds <= 0:
+        return "곧"
+    if seconds < 3600:
+        return f"약 {ceil(seconds / 60)}분 뒤"
+    if seconds < 86400:
+        return f"약 {ceil(seconds / 3600)}시간 뒤"
+    return f"약 {ceil(seconds / 86400)}일 뒤"
+
+
+templates.env.filters["until"] = until_label
+
+
 def current_year() -> int:
     """푸터의 저작권 연도.
 
@@ -110,14 +159,41 @@ def current_year() -> int:
 
 
 templates.env.globals["current_year"] = current_year
+# import된 매크로(_pagination.html)는 호출한 템플릿의 컨텍스트를 못 보므로
+# 전역으로 노출한다 — 호출부마다 임계값을 넘겨주지 않아도 되게.
+templates.env.globals["pagination_ends_threshold"] = PAGINATION_ENDS_THRESHOLD
 
 
 @app.get("/", response_class=HTMLResponse)
 def read_root(request: Request, user: User | None = Depends(auth.get_optional_user)):
-    # 비로그인은 폼 자체가 없으므로 한도도 조회하지 않는다(불필요한 DB 왕복 회피).
+    """서비스 소개(웰컴) 화면. 생성 폼은 /generate로 분리돼 있다.
+
+    로그인 여부와 무관하게 같은 소개를 보여주고 CTA만 달라지므로, 여기서는
+    레이트리밋을 조회하지 않는다(배너가 없다).
+    """
+    return templates.TemplateResponse(request, "welcome.html", {"user": user})
+
+
+@app.get("/generate", response_class=HTMLResponse)
+def generate_form(request: Request, user: User | None = Depends(auth.get_optional_user)):
+    """생성 화면. 예전 "/"의 내용이 그대로 여기로 왔다.
+
+    비로그인도 404가 아니라 로그인 안내를 본다 — 폼 자체가 없으므로 한도도
+    조회하지 않는다(불필요한 DB 왕복 회피).
+    """
     rate_status = auth.check_rate_limit(user) if user is not None else None
     return templates.TemplateResponse(
-        request, "index.html", {"user": user, "rate_status": rate_status}
+        request,
+        "generate.html",
+        {
+            "user": user,
+            "rate_status": rate_status,
+            # 안내 문구의 수치·예시는 A1의 판정 규칙에서 파생한다(하드코딩 금지).
+            "broad_terms": sorted(BROAD_TERMS),
+            "min_length": MIN_LENGTH,
+            "max_length": MAX_LENGTH,
+            "grade_choices": GRADE_CHOICES,
+        },
     )
 
 
@@ -385,6 +461,22 @@ def _result_fragment(
     )
 
 
+def _recovery_hint(rate_status) -> str:
+    """차단 안내에 붙이는 "언제 다시 쓸 수 있는지" 문구.
+
+    실제로 막고 있는 쪽(한도에 닿은 윈도우)의 회복 시각만 말한다 — 일 한도로
+    막혔는데 주 한도 시각을 알려주면 실제보다 훨씬 멀게 들린다.
+    """
+    blocked = []
+    if rate_status.daily_used >= rate_status.daily_limit and rate_status.daily_reset_at:
+        blocked.append(f"일 한도는 {until_label(rate_status.daily_reset_at)}")
+    if rate_status.weekly_used >= rate_status.weekly_limit and rate_status.weekly_reset_at:
+        blocked.append(f"주 한도는 {until_label(rate_status.weekly_reset_at)}")
+    if not blocked:
+        return "잠시 후 다시 시도해 주세요."
+    return ", ".join(blocked) + " 1회 회복됩니다."
+
+
 @app.post("/generate", response_class=HTMLResponse)
 def generate(
     request: Request,
@@ -415,7 +507,8 @@ def generate(
             status_code=429,
             detail=(
                 f"생성 횟수를 초과했습니다 (일 {rate_status.daily_used}/{rate_status.daily_limit}회, "
-                f"주 {rate_status.weekly_used}/{rate_status.weekly_limit}회). 잠시 후 다시 시도해 주세요."
+                f"주 {rate_status.weekly_used}/{rate_status.weekly_limit}회). "
+                f"{_recovery_hint(rate_status)}"
             ),
         )
 
@@ -544,17 +637,61 @@ def logout(session_id: str | None = Cookie(default=None, alias=auth.SESSION_COOK
 
 
 @app.get("/mypage", response_class=HTMLResponse)
-def mypage(request: Request, page: int = 1, user: User = Depends(auth.get_current_user)):
+def mypage(
+    request: Request,
+    page: int = 1,
+    subject: str | None = None,
+    user: User = Depends(auth.get_current_user),
+):
+    """생성 히스토리. subject는 lesson_output에 저장된 한글 과목 라벨이다.
+
+    선택지에 없는 값(오타·구버전 링크)은 조회 결과가 0건이 될 뿐 오류가 아니다 —
+    필터 폼은 목록이 비어도 계속 보이므로 되돌아올 수 있다.
+    """
     page = max(page, 1)
     offset = (page - 1) * MYPAGE_PAGE_SIZE
-    items = db.list_lesson_requests(user.id, limit=MYPAGE_PAGE_SIZE, offset=offset)
-    total = db.count_lesson_requests(user.id)
+    items = db.list_lesson_requests(
+        user.id, limit=MYPAGE_PAGE_SIZE, offset=offset, subject=subject
+    )
+    total = db.count_lesson_requests(user.id, subject=subject)
     total_pages = max((total + MYPAGE_PAGE_SIZE - 1) // MYPAGE_PAGE_SIZE, 1)
     return templates.TemplateResponse(
         request,
         "mypage.html",
-        {"user": user, "items": items, "page": page, "total_pages": total_pages},
+        {
+            "user": user,
+            "items": items,
+            "page": page,
+            "total_pages": total_pages,
+            "subject": subject or "",
+            "subjects": SUBJECT_LABEL_OPTIONS,
+            "grade_choices": GRADE_CHOICES,
+        },
     )
+
+
+@app.post("/mypage/settings")
+def update_mypage_settings(
+    default_grade: str = Form(""),
+    user: User = Depends(auth.get_current_user),
+):
+    """담당 학년 기본값 저장. 빈 값은 "설정 안 함"(NULL)이다.
+
+    폼은 select 하나뿐이라 실패 화면을 따로 두지 않는다 — 정상 저장이든 아니든
+    마이페이지로 돌아간다. 범위를 벗어난 값은 CHECK 제약에 닿기 전에 400으로
+    막는다(직접 조립한 요청 방어).
+    """
+    grade = None
+    if default_grade:
+        try:
+            grade = int(default_grade)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="학년 값이 올바르지 않습니다.")
+        if grade not in GRADE_CHOICES:
+            raise HTTPException(status_code=400, detail="학년 값이 올바르지 않습니다.")
+
+    db.update_user_default_grade(user.id, grade)
+    return RedirectResponse(url="/mypage", status_code=303)
 
 
 def _get_owned_lesson_request(request_id: UUID, user: User):

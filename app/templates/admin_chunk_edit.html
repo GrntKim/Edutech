@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}성취기준 수정 - Edutech{% endblock %}
-{% block nav_extra %}<a href="/admin/chunks">성취기준 목록</a>{% endblock %}
 {% block content %}
+        {# 상위 화면 링크는 헤더가 아니라 본문 상단에 둔다(헤더는 모든 페이지에서 동일). #}
+        <nav class="breadcrumb">
+            <a href="/admin">관리자</a> / <a href="/admin/chunks">성취기준 목록</a> / 수정
+        </nav>
         <h1>성취기준 수정 — {{ chunk.achievement_code }}</h1>
 
         {% if saved %}

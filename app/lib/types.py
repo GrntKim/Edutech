@@ -177,6 +177,9 @@ class User(BaseModel):
     name: str
     role: Literal["user", "admin"]
     created_at: datetime
+    # 마이페이지에서 설정하는 담당 학년(초등 1~6). 선택 항목이라 기본은 "설정 안 함".
+    # 생성 화면의 학년 기본 선택에만 쓰이며, 생성 시 다른 학년을 골라도 이 값은 바뀌지 않는다.
+    default_grade: int | None = None
 
 
 # 소유: E(REQ-006)
@@ -210,3 +213,8 @@ class RateLimitStatus(BaseModel):
     daily_limit: int
     weekly_used: int
     weekly_limit: int
+    # 다음 1회가 회복되는 시각(UTC). 롤링 윈도우라 캘린더 자정 리셋이 아니라
+    # 윈도우 안 가장 오래된 요청이 빠져나가는 시각이다. 사용량이 0이거나
+    # admin(무제한)이면 리셋할 것이 없어 None.
+    daily_reset_at: datetime | None = None
+    weekly_reset_at: datetime | None = None

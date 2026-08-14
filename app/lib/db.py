@@ -52,6 +52,10 @@ _CHUNK_COLUMNS = (
     "achievement_code, achievement_text, explanation, inquiry_activities, source_page"
 )
 
+# User(Pydantic)의 전 필드. 같은 목록이 조회 3곳(INSERT RETURNING 포함)에 흩어져
+# 있어서 컬럼이 늘 때마다 하나를 빠뜨리기 쉬웠다 — 한 곳에서만 관리한다.
+_USER_COLUMNS = "id, email, password_hash, name, role, created_at, default_grade"
+
 
 class DatabaseError(Exception):
     """DB 접근 관련 모든 예외의 기반 클래스."""
@@ -351,7 +355,7 @@ def create_user(email: str, password_hash: str, name: str, role: str = "user") -
     query = (
         "INSERT INTO users (email, password_hash, name, role) "
         "VALUES (%s, %s, %s, %s) "
-        "RETURNING id, email, password_hash, name, role, created_at"
+        f"RETURNING {_USER_COLUMNS}"
     )
     try:
         with get_cursor(dict_rows=True) as cur:
@@ -363,7 +367,7 @@ def create_user(email: str, password_hash: str, name: str, role: str = "user") -
 
 
 def get_user_by_email(email: str) -> User | None:
-    query = "SELECT id, email, password_hash, name, role, created_at FROM users WHERE email = %s"
+    query = f"SELECT {_USER_COLUMNS} FROM users WHERE email = %s"
     with get_cursor(dict_rows=True) as cur:
         cur.execute(query, (email,))
         row = cur.fetchone()
@@ -371,9 +375,22 @@ def get_user_by_email(email: str) -> User | None:
 
 
 def get_user_by_id(user_id: UUID) -> User | None:
-    query = "SELECT id, email, password_hash, name, role, created_at FROM users WHERE id = %s"
+    query = f"SELECT {_USER_COLUMNS} FROM users WHERE id = %s"
     with get_cursor(dict_rows=True) as cur:
         cur.execute(query, (user_id,))
+        row = cur.fetchone()
+    return User(**row) if row is not None else None
+
+
+def update_user_default_grade(user_id: UUID, default_grade: int | None) -> User | None:
+    """담당 학년 기본값을 저장한다. None이면 "설정 안 함"으로 되돌린다.
+
+    범위(1~6) 검증은 CHECK 제약(users_default_grade_check)이 최종 방어선이고,
+    호출부에서도 미리 걸러 400으로 돌려준다 — 여기서 예외를 삼키지는 않는다.
+    """
+    query = f"UPDATE users SET default_grade = %s WHERE id = %s RETURNING {_USER_COLUMNS}"
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (default_grade, user_id))
         row = cur.fetchone()
     return User(**row) if row is not None else None
 
@@ -409,6 +426,23 @@ def count_lesson_requests_since(user_id: UUID, window: timedelta) -> int:
         cur.execute(query, (user_id, window))
         row = cur.fetchone()
     return row["n"]
+
+
+def oldest_lesson_request_since(user_id: UUID, window: timedelta) -> datetime | None:
+    """윈도우 안에서 가장 오래된 요청 시각. 없으면 None.
+
+    롤링 윈도우라 캘린더 자정에 리셋되지 않는다 — 가장 오래된 행이 윈도우를
+    벗어나는 순간 한도가 1회 회복되므로, 그 시각 + window가 곧 다음 리셋 시각이다.
+    조건은 count_lesson_requests_since와 같아야 한다(soft-delete 행도 포함).
+    """
+    query = (
+        "SELECT min(created_at) AS oldest FROM lesson_requests "
+        "WHERE user_id = %s AND created_at > now() - %s"
+    )
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (user_id, window))
+        row = cur.fetchone()
+    return row["oldest"] if row is not None else None
 
 
 def create_lesson_request(
@@ -456,25 +490,42 @@ def create_lesson_request(
     return LessonRequest(**row)
 
 
-def list_lesson_requests(user_id: UUID, limit: int, offset: int) -> list[LessonRequest]:
+def _lesson_request_subject_filter(subject: str | None) -> tuple[str, tuple]:
+    """과목 필터 조각과 파라미터를 함께 만든다(마이페이지 목록/개수 공용).
+
+    과목은 별도 컬럼이 아니라 lesson_output(jsonb) 안에 한글 라벨로 들어 있다
+    (C가 B의 Subject enum을 subject_label()로 변환해 넣은 결정론적 값). 행 수가
+    적어 별도 인덱스는 두지 않는다.
+    """
+    if not subject:
+        return "", ()
+    return " AND lesson_output->>'subject' = %s", (subject,)
+
+
+def list_lesson_requests(
+    user_id: UUID, limit: int, offset: int, subject: str | None = None
+) -> list[LessonRequest]:
+    where, params = _lesson_request_subject_filter(subject)
     query = (
         "SELECT id, user_id, concept_name, target_grade, subject_hint, "
         "mapped_curriculum_code, lesson_output, validation_status, created_at "
-        "FROM lesson_requests WHERE user_id = %s AND deleted_at IS NULL "
-        "ORDER BY created_at DESC LIMIT %s OFFSET %s"
+        "FROM lesson_requests WHERE user_id = %s AND deleted_at IS NULL"
+        f"{where} ORDER BY created_at DESC LIMIT %s OFFSET %s"
     )
     with get_cursor(dict_rows=True) as cur:
-        cur.execute(query, (user_id, limit, offset))
+        cur.execute(query, (user_id, *params, limit, offset))
         rows = cur.fetchall()
     return [LessonRequest(**row) for row in rows]
 
 
-def count_lesson_requests(user_id: UUID) -> int:
+def count_lesson_requests(user_id: UUID, subject: str | None = None) -> int:
     """마이페이지 목록 페이지네이션 총 개수(레이트리밋 윈도우 카운트와는 별개, 삭제 제외 전체 기간)."""
+    where, params = _lesson_request_subject_filter(subject)
     with get_cursor(dict_rows=True) as cur:
         cur.execute(
-            "SELECT count(*) AS n FROM lesson_requests WHERE user_id = %s AND deleted_at IS NULL",
-            (user_id,),
+            "SELECT count(*) AS n FROM lesson_requests "
+            f"WHERE user_id = %s AND deleted_at IS NULL{where}",
+            (user_id, *params),
         )
         row = cur.fetchone()
     return row["n"]

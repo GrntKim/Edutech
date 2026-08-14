@@ -104,7 +104,6 @@ a:hover {
 
 .site-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     gap: var(--space-4);
     flex-wrap: wrap;
@@ -121,6 +120,20 @@ a:hover {
 .site-logo {
     font-size: 0.95rem;
     letter-spacing: 0.02em;
+    /* 나머지(nav·계정)를 오른쪽으로 민다. */
+    margin-right: auto;
+}
+
+/* 햄버거와 스크림은 좁은 화면 전용이다. */
+.nav-toggle,
+.nav-scrim {
+    display: none;
+}
+
+.site-account {
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: var(--text-muted);
 }
 
 /* 로고만 본문 글자색을 따른다. nav 링크는 기본 링크 색을 유지한다. */
@@ -236,6 +249,80 @@ dd {
     margin: 0;
 }
 
+/* ── 웰컴 ───────────────────────────────────── */
+
+/* 소개 페이지는 본문 화면들과 달리 가운데 정렬 한 덩어리로 읽힌다.
+   문구가 아직 확정 전이라 자리 크기만 잡아둔다(welcome.html의 copy 참고). */
+.welcome {
+    text-align: center;
+    padding: var(--space-6) 0;
+}
+
+.welcome-logo {
+    display: inline-block;
+    margin-bottom: var(--space-5);
+    padding: var(--space-3) var(--space-5);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text-faint);
+    font-size: 0.9375rem;
+}
+
+.welcome-slogan {
+    font-size: 1.75rem;
+    margin-bottom: var(--space-4);
+}
+
+.welcome-intro {
+    max-width: 34rem;
+    margin: 0 auto var(--space-6);
+    color: var(--text-muted);
+}
+
+.welcome-features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-4);
+    margin: 0 0 var(--space-6);
+    padding: 0;
+    list-style: none;
+    text-align: left;
+}
+
+.welcome-card {
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-sunken);
+}
+
+.welcome-card h2 {
+    margin: 0 0 var(--space-2);
+    font-size: 1rem;
+}
+
+.welcome-card p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9375rem;
+}
+
+.cta-btn {
+    display: inline-block;
+    padding: 0.625rem 1.75rem;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.cta-btn:hover {
+    background: var(--accent-strong);
+    color: #fff;
+}
+
 /* ── 폼 ─────────────────────────────────────── */
 
 .info-form {
@@ -257,6 +344,28 @@ dd {
     font-size: 0.8125rem;
     font-weight: 600;
     color: var(--text-muted);
+}
+
+/* 입력 아래 접히는 도움말. 기본은 닫혀 있어 폼 높이를 늘리지 않는다. */
+.field-help {
+    margin-top: var(--space-1);
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
+.field-help summary {
+    cursor: pointer;
+    color: var(--accent-strong);
+    width: fit-content;
+}
+
+.field-help ul {
+    margin: var(--space-2) 0 0 1.1rem;
+    padding: 0;
+}
+
+.field-help li {
+    margin-bottom: var(--space-1);
 }
 
 input[type="text"],
@@ -325,7 +434,7 @@ button:hover {
     border-color: var(--accent-strong);
 }
 
-/* 생성 중에는 버튼이 잠긴다(index.html 스크립트). 눌리지 않는다는 것이 보여야 한다. */
+/* 생성 중에는 버튼이 잠긴다(generate.html 스크립트). 눌리지 않는다는 것이 보여야 한다. */
 button:disabled {
     cursor: not-allowed;
     opacity: 0.55;
@@ -381,6 +490,13 @@ table.history-table td:last-child {
     white-space: nowrap;
 }
 
+/* 상위 화면으로 가는 링크는 헤더가 아니라 본문 제목 위에 둔다. */
+.breadcrumb {
+    margin-bottom: var(--space-2);
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
 .pagination {
     display: flex;
     align-items: center;
@@ -421,6 +537,40 @@ table.history-table td:last-child {
 
 .rate-limit strong {
     color: var(--text);
+}
+
+/* 회복 시각은 보조 정보라 한 단계 더 흐리게. */
+.rate-reset {
+    color: var(--text-faint);
+}
+
+/* 교안 맨 위 액션 바 — 왼쪽 다운로드, 오른쪽 새로 생성. */
+.lesson-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+/* 다운로드가 주 동작이므로 "새로 생성"은 조용한 보조 톤으로 둔다. */
+.regen-btn {
+    display: inline-block;
+    margin: var(--space-2) 0 var(--space-4);
+    padding: 0.5rem 1.125rem;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    text-decoration: none;
+    font-size: 0.9375rem;
+    vertical-align: middle;
+}
+
+.regen-btn:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+    background: var(--bg-sunken);
 }
 
 .download-btn {
@@ -635,7 +785,79 @@ table.history-table td:last-child {
 
     .site-header {
         position: static;
+        /* 햄버거 · 로고 · 계정이 한 줄에 선다. 링크는 사이드바로 빠진다. */
+        flex-wrap: nowrap;
+        gap: var(--space-3);
+    }
+
+    .nav-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        /* 손가락으로 누를 수 있는 최소 크기. */
+        width: 2.25rem;
+        height: 2.25rem;
+        padding: 0;
+        font-size: 1.125rem;
+        line-height: 1;
+        background: none;
+        border: 1px solid var(--border);
+    }
+
+    .site-logo {
+        font-size: 0.875rem;
+    }
+
+    .site-account {
+        /* 헤더 오른쪽에 계정 표시만 남긴다. */
+        white-space: nowrap;
+        font-size: 0.8125rem;
+    }
+
+    /* 링크 전체가 왼쪽에서 밀려 나오는 패널로 들어간다. */
+    .site-nav {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        z-index: 40;
+        width: min(78vw, 17rem);
+        flex-direction: column;
         align-items: flex-start;
+        flex-wrap: nowrap;
+        row-gap: var(--space-4);
+        padding: var(--space-6) var(--space-4);
+        background: var(--bg);
+        border-right: 1px solid var(--border);
+        font-size: 1rem;
+        overflow-y: auto;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+    }
+
+    body.nav-open .site-nav {
+        transform: translateX(0);
+    }
+
+    .nav-scrim {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        background: rgba(0, 0, 0, 0.35);
+    }
+
+    /* 닫힌 상태는 hidden 속성으로 표시한다 — display를 덮어써야 실제로 사라진다. */
+    .nav-scrim[hidden] {
+        display: none;
+    }
+
+    .welcome-features {
+        grid-template-columns: 1fr;
+    }
+
+    .welcome-slogan {
+        font-size: 1.375rem;
     }
 
     /* 표를 감쌀 요소를 새로 넣을 수 없으므로 표 자체를 스크롤 영역으로 만든다. */
@@ -660,12 +882,14 @@ table.history-table td:last-child {
 /* 교안을 그대로 인쇄하는 경우가 많다. 화면 껍데기는 종이에 남기지 않는다. */
 @media print {
     .site-header,
+    .nav-scrim,
     .site-footer,
     #page-progress,
     .gen-progress,
     .rate-limit,
     .pagination,
     .info-form,
+    .lesson-actions,
     .download-btn,
     button {
         display: none !important;
@@ -691,5 +915,10 @@ table.history-table td:last-child {
     /* 막대는 애니메이션 없이 현재 값으로 바로 선다(width는 그대로 유지된다). */
     .gen-bar-fill {
         animation: none;
+    }
+
+    /* 사이드바는 미끄러지지 않고 바로 나타난다. */
+    .site-nav {
+        transition: none;
     }
 }

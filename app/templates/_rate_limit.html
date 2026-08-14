@@ -1,4 +1,4 @@
-{# 남은 생성 횟수 배너. index.html이 직접 include하고, generate() 응답(result.html)은
+{# 남은 생성 횟수 배너. generate.html이 직접 include하고, generate() 응답(result.html)은
    rate_oob=True로 include해 htmx out-of-band swap으로 같은 id를 갈아끼운다 —
    htmx가 #result만 교체하므로 폼 옆 배너는 OOB 없이는 갱신되지 않는다.
 
@@ -13,6 +13,16 @@
     <strong>{{ [rate_status.daily_limit - rate_status.daily_used, 0] | max }}</strong>/{{ rate_status.daily_limit }}회,
     이번 주
     <strong>{{ [rate_status.weekly_limit - rate_status.weekly_used, 0] | max }}</strong>/{{ rate_status.weekly_limit }}회
+    {# 롤링 윈도우라 자정에 초기화되지 않는다 — 가장 오래된 요청이 윈도우를
+       벗어날 때 1회씩 회복된다. 언제 다시 쓸 수 있는지 알려준다. #}
+    {% if rate_status.daily_reset_at or rate_status.weekly_reset_at %}
+    <span class="rate-reset">
+        ·
+        {% if rate_status.daily_reset_at %}일 한도 {{ rate_status.daily_reset_at | until }} 1회 회복{% endif %}
+        {%- if rate_status.daily_reset_at and rate_status.weekly_reset_at %}, {% endif -%}
+        {% if rate_status.weekly_reset_at %}주 한도 {{ rate_status.weekly_reset_at | until }} 1회 회복{% endif %}
+    </span>
+    {% endif %}
     {% endif %}
 </div>
 {% endif %}
