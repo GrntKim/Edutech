@@ -210,3 +210,8 @@ class RateLimitStatus(BaseModel):
     daily_limit: int
     weekly_used: int
     weekly_limit: int
+    # 다음 1회가 회복되는 시각(UTC). 롤링 윈도우라 캘린더 자정 리셋이 아니라
+    # 윈도우 안 가장 오래된 요청이 빠져나가는 시각이다. 사용량이 0이거나
+    # admin(무제한)이면 리셋할 것이 없어 None.
+    daily_reset_at: datetime | None = None
+    weekly_reset_at: datetime | None = None

@@ -539,6 +539,11 @@ table.history-table td:last-child {
     color: var(--text);
 }
 
+/* 회복 시각은 보조 정보라 한 단계 더 흐리게. */
+.rate-reset {
+    color: var(--text-faint);
+}
+
 /* 교안 맨 위 액션 바 — 왼쪽 다운로드, 오른쪽 새로 생성. */
 .lesson-actions {
     display: flex;

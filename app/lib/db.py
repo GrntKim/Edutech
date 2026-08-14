@@ -411,6 +411,23 @@ def count_lesson_requests_since(user_id: UUID, window: timedelta) -> int:
     return row["n"]
 
 
+def oldest_lesson_request_since(user_id: UUID, window: timedelta) -> datetime | None:
+    """윈도우 안에서 가장 오래된 요청 시각. 없으면 None.
+
+    롤링 윈도우라 캘린더 자정에 리셋되지 않는다 — 가장 오래된 행이 윈도우를
+    벗어나는 순간 한도가 1회 회복되므로, 그 시각 + window가 곧 다음 리셋 시각이다.
+    조건은 count_lesson_requests_since와 같아야 한다(soft-delete 행도 포함).
+    """
+    query = (
+        "SELECT min(created_at) AS oldest FROM lesson_requests "
+        "WHERE user_id = %s AND created_at > now() - %s"
+    )
+    with get_cursor(dict_rows=True) as cur:
+        cur.execute(query, (user_id, window))
+        row = cur.fetchone()
+    return row["oldest"] if row is not None else None
+
+
 def create_lesson_request(
     user_id: UUID,
     concept_name: str,

@@ -7,7 +7,7 @@
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, unquote
 from uuid import uuid4
 
@@ -90,6 +90,16 @@ def client(user):
     with TestClient(main.app, raise_server_exceptions=False) as test_client:
         yield test_client
     main.app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_reset_lookup(monkeypatch):
+    """레이트리밋 리셋 시각 조회는 기본적으로 막는다(테스트가 실제 DB로 나가지 않게).
+
+    사용량이 0이면 auth가 조회 자체를 건너뛰지만, 사용량을 흉내 내는 테스트는
+    이 스텁이 없으면 .env를 타고 진짜 DB에 붙는다.
+    """
+    monkeypatch.setattr(db, "oldest_lesson_request_since", lambda user_id, window: None)
 
 
 @pytest.fixture(autouse=True)
@@ -659,6 +669,58 @@ def test_generate_page_shows_remaining_counts(client, monkeypatch):
     # 일 5회 중 2회 사용 → 3회 남음, 주 15회 중 4회 사용 → 11회 남음
     assert "오늘 <strong>3</strong>/5회" in body
     assert "이번 주 <strong>11</strong>/15회" in body
+
+
+def test_banner_shows_when_limits_recover(client, monkeypatch):
+    """롤링 윈도우라 자정 초기화가 아니다 — 언제 1회 회복되는지 알려준다."""
+    oldest = datetime.now(timezone.utc) - timedelta(hours=21)
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 2)
+    monkeypatch.setattr(db, "oldest_lesson_request_since", lambda user_id, window: oldest)
+
+    body = " ".join(client.get("/generate").text.split())
+
+    # 일 윈도우(24h)는 3시간 뒤, 주 윈도우(7d)는 6일 뒤에 가장 오래된 행이 빠진다.
+    assert "일 한도 약 3시간 뒤 1회 회복" in body
+    assert "주 한도 약 7일 뒤 1회 회복" in body
+
+
+def test_banner_omits_reset_when_unused(client, monkeypatch):
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    body = client.get("/generate").text
+
+    assert "회복" not in body
+
+
+def test_rate_limit_block_message_names_blocking_window(client, monkeypatch, saved_rows):
+    """일 한도로 막혔으면 일 한도 회복 시각만 말한다 — 주 한도 시각은 훨씬 멀다."""
+    oldest = datetime.now(timezone.utc) - timedelta(hours=22)
+    monkeypatch.setattr(
+        db, "count_lesson_requests_since", lambda user_id, window: 5 if window.days == 1 else 6
+    )
+    monkeypatch.setattr(db, "oldest_lesson_request_since", lambda user_id, window: oldest)
+
+    response = client.post("/generate", data={"concept": "이미지 인식", "grade": 5})
+
+    assert response.status_code == 429
+    assert "일 한도는 약 2시간 뒤 1회 회복됩니다." in response.text
+    assert "주 한도" not in response.text
+
+
+def test_until_label_rounds_up_by_unit():
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+
+    assert main.until_label(now + timedelta(minutes=59), now) == "약 59분 뒤"
+    assert main.until_label(now + timedelta(hours=2, minutes=1), now) == "약 3시간 뒤"
+    assert main.until_label(now + timedelta(days=2, hours=1), now) == "약 3일 뒤"
+    # 이미 지난 시각은 다음 조회에서 카운트가 빠진다 — 음수 시간을 보여주지 않는다.
+    assert main.until_label(now - timedelta(minutes=5), now) == "곧"
+
+
+def test_until_label_treats_naive_value_as_utc():
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+
+    assert main.until_label(datetime(2026, 8, 14, 14, 0), now) == "약 2시간 뒤"
 
 
 def test_generate_page_shows_unlimited_for_admin(client, monkeypatch):

@@ -9,6 +9,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import ceil
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import quote
@@ -109,6 +110,33 @@ def to_kst(value: datetime, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 
 templates.env.filters["kst"] = to_kst
+
+
+def until_label(target: datetime, now: datetime | None = None) -> str:
+    """지금부터 target까지 남은 시간을 사람이 읽는 대략치로 바꾼다.
+
+    레이트리밋은 롤링 윈도우라 "내일 자정에 초기화"처럼 고정된 시점이 없다 —
+    가장 오래된 요청이 윈도우를 벗어날 때 1회씩 회복된다. 그래서 절대 시각보다
+    "약 몇 시간 뒤"가 사용자에게 쓸모 있는 정보다.
+
+    올림한다 — 59분 남았는데 "0시간 뒤"로 보이면 안 된다. tz가 없는 값은 UTC로
+    간주한다(to_kst와 같은 규약).
+    """
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    remaining = target - (now or datetime.now(timezone.utc))
+
+    seconds = remaining.total_seconds()
+    if seconds <= 0:
+        return "곧"
+    if seconds < 3600:
+        return f"약 {ceil(seconds / 60)}분 뒤"
+    if seconds < 86400:
+        return f"약 {ceil(seconds / 3600)}시간 뒤"
+    return f"약 {ceil(seconds / 86400)}일 뒤"
+
+
+templates.env.filters["until"] = until_label
 
 
 def current_year() -> int:
@@ -427,6 +455,22 @@ def _result_fragment(
     )
 
 
+def _recovery_hint(rate_status) -> str:
+    """차단 안내에 붙이는 "언제 다시 쓸 수 있는지" 문구.
+
+    실제로 막고 있는 쪽(한도에 닿은 윈도우)의 회복 시각만 말한다 — 일 한도로
+    막혔는데 주 한도 시각을 알려주면 실제보다 훨씬 멀게 들린다.
+    """
+    blocked = []
+    if rate_status.daily_used >= rate_status.daily_limit and rate_status.daily_reset_at:
+        blocked.append(f"일 한도는 {until_label(rate_status.daily_reset_at)}")
+    if rate_status.weekly_used >= rate_status.weekly_limit and rate_status.weekly_reset_at:
+        blocked.append(f"주 한도는 {until_label(rate_status.weekly_reset_at)}")
+    if not blocked:
+        return "잠시 후 다시 시도해 주세요."
+    return ", ".join(blocked) + " 1회 회복됩니다."
+
+
 @app.post("/generate", response_class=HTMLResponse)
 def generate(
     request: Request,
@@ -457,7 +501,8 @@ def generate(
             status_code=429,
             detail=(
                 f"생성 횟수를 초과했습니다 (일 {rate_status.daily_used}/{rate_status.daily_limit}회, "
-                f"주 {rate_status.weekly_used}/{rate_status.weekly_limit}회). 잠시 후 다시 시도해 주세요."
+                f"주 {rate_status.weekly_used}/{rate_status.weekly_limit}회). "
+                f"{_recovery_hint(rate_status)}"
             ),
         )
 
