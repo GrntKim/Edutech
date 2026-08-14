@@ -333,6 +333,28 @@ dd {
     color: var(--text-muted);
 }
 
+/* 입력 아래 접히는 도움말. 기본은 닫혀 있어 폼 높이를 늘리지 않는다. */
+.field-help {
+    margin-top: var(--space-1);
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
+.field-help summary {
+    cursor: pointer;
+    color: var(--accent-strong);
+    width: fit-content;
+}
+
+.field-help ul {
+    margin: var(--space-2) 0 0 1.1rem;
+    padding: 0;
+}
+
+.field-help li {
+    margin-bottom: var(--space-1);
+}
+
 input[type="text"],
 input[type="email"],
 input[type="password"],

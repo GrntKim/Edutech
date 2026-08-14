@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
+from app.agents.concept_collect import logic as concept_logic
 from app.lib import auth, db
 from app.lib.types import (
     ConceptInput,
@@ -560,6 +561,18 @@ def test_generate_page_renders_form(client, monkeypatch):
 
     assert 'id="generation-form"' in body
     assert 'hx-post="/generate"' in body
+
+
+def test_generate_page_help_uses_agent_constants(client, monkeypatch):
+    """거부 조건 안내는 A1의 상수에서 파생한다 — 화면에 숫자를 박아두지 않는다."""
+    monkeypatch.setattr(db, "count_lesson_requests_since", lambda user_id, window: 0)
+
+    body = client.get("/generate").text
+
+    assert f"{concept_logic.MIN_LENGTH}~{concept_logic.MAX_LENGTH}자" in body
+    for term in concept_logic.BROAD_TERMS:
+        assert term in body
+    assert "생성 횟수는 차감되지 않습니다" in body
 
 
 # ---------- 남은 횟수 배너 ----------

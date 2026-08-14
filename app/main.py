@@ -19,6 +19,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+# 읽기 전용 import. 개념 입력 안내에 쓰는 거부 조건 수치를 A1의 정의에서 그대로
+# 가져온다 — 화면에 하드코딩하면 A1이 값을 바꿨을 때 안내만 조용히 어긋난다.
+from app.agents.concept_collect.logic import BROAD_TERMS, MAX_LENGTH, MIN_LENGTH
 from app.agents.lesson_generate import LessonOutput, render_lesson_docx
 from app.agents.orchestrate import MAX_RETRIES, STAGES, run_pipeline
 from app.lib import auth, db
@@ -131,7 +134,16 @@ def generate_form(request: Request, user: User | None = Depends(auth.get_optiona
     """
     rate_status = auth.check_rate_limit(user) if user is not None else None
     return templates.TemplateResponse(
-        request, "generate.html", {"user": user, "rate_status": rate_status}
+        request,
+        "generate.html",
+        {
+            "user": user,
+            "rate_status": rate_status,
+            # 안내 문구의 수치·예시는 A1의 판정 규칙에서 파생한다(하드코딩 금지).
+            "broad_terms": sorted(BROAD_TERMS),
+            "min_length": MIN_LENGTH,
+            "max_length": MAX_LENGTH,
+        },
     )
 
 

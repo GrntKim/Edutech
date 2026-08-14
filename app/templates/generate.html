@@ -13,7 +13,22 @@
             <form id="generation-form" hx-post="/generate" hx-target="#result" hx-sync="this:drop" class="info-form">
                 <div>
                     <label for="concept-input">개념</label>
-                    <input type="text" id="concept-input" name="concept" required placeholder="개념을 입력하세요"/>
+                    <input type="text" id="concept-input" name="concept" required
+                           placeholder="예: 군집화, 패턴 인식, 이미지 인식"
+                           aria-describedby="concept-help"/>
+                    {# 거부 조건 수치는 A1(concept_collect)의 상수에서 넘어온다.
+                       여기에 숫자를 직접 적으면 A1이 값을 바꿨을 때 안내만 틀어진다. #}
+                    <details id="concept-help" class="field-help">
+                        <summary>어떤 개념을 입력할 수 있나요?</summary>
+                        <ul>
+                            <li><strong>목록에 없는 개념도 자유롭게 입력할 수 있습니다.</strong> 미리 정해둔 개념만 되는 것이 아닙니다.</li>
+                            <li>너무 넓은 말({{ broad_terms | join(", ") }} 등)은 수업 내용을 특정할 수 없어 생성이 거부됩니다. 이 경우 <strong>생성 횟수는 차감되지 않습니다.</strong></li>
+                            <li>길이는 {{ min_length }}~{{ max_length }}자입니다.</li>
+                            <li>AI 개념으로 인식되지 않으면 생성이 중단됩니다.</li>
+                            <li>개념명이 교과 성취기준 원문의 어휘와 정면으로 겹치면(예: 분류) 의도한 학년보다 낮은 학년군의 성취기준으로 연결될 수 있습니다.</li>
+                            <li>띄어쓰기 등 표기가 달라지면 결과가 달라질 수 있습니다.</li>
+                        </ul>
+                    </details>
                 </div>
                 <div>
                     <label for="grade-select">학년</label>
