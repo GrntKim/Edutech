@@ -83,7 +83,10 @@
     <header class="site-header">
         <button type="button" class="nav-toggle" aria-label="메뉴 열기"
                 aria-expanded="false" aria-controls="site-nav">☰</button>
-        <span class="site-logo"><a href="/">EDUTECH - PROTOTYPE</a></span>
+        {# 크기는 style.css의 .site-logo img가 잡는다 — SVG 자체는 1100×220이라
+           그대로 두면 헤더를 밀어낸다. alt이 곧 이 링크의 이름이다. #}
+        <span class="site-logo"><a href="/"><img
+            src="{{ url_for('static', path='/wordmark.svg') }}" alt="EDUTECH"></a></span>
         <nav class="site-nav" id="site-nav">
             {% if user %}
             <a href="/generate">교수학습과정안 생성</a>
