@@ -86,7 +86,7 @@
         <span class="site-logo"><a href="/">EDUTECH - PROTOTYPE</a></span>
         <nav class="site-nav" id="site-nav">
             {% if user %}
-            <a href="/generate">교안 생성</a>
+            <a href="/generate">교수학습과정안 생성</a>
             <a href="/mypage">마이페이지</a>
             {% if user.role == "admin" %}<a href="/admin">관리자</a>{% endif %}
             <form method="post" action="/logout">
