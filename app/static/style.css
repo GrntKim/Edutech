@@ -270,15 +270,28 @@ dd {
     display: inline-block;
     margin-bottom: var(--space-5);
     padding: var(--space-3) var(--space-5);
-    border: 1px dashed var(--border-strong);
-    border-radius: var(--radius);
     color: var(--text-faint);
     font-size: 0.9375rem;
 }
 
+/* 슬로건과 워드마크를 한 줄로 붙인다. 좁은 화면에서는 줄바꿈을 허용한다. */
 .welcome-slogan {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375em;
     font-size: 1.75rem;
     margin-bottom: var(--space-4);
+}
+
+/* 워드마크는 가로 5:1이라 글자 높이에 맞추면 너무 길어진다.
+   글자 크기를 따라가되(em 기준) 대문자 높이 정도로 낮춘다. */
+.welcome-wordmark {
+    height: 1em;
+    width: auto;
+    position: relative;
+    top: 0.02em;
 }
 
 .welcome-intro {

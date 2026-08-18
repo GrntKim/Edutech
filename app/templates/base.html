@@ -9,12 +9,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Edutech{% endblock %}</title>
+    <title>{% block title %}MATCHU{% endblock %}</title>
     {# scrollIntoViewOnBoost=false: boost는 기본적으로 교체한 타깃을 화면 상단으로
        끌어올린다. 목록에서 상세로 갔다 뒤로 돌아왔을 때 위치가 튀지 않게 끈다 —
        뒤로/앞으로의 스크롤 복원은 htmx의 history 스냅샷이 따로 처리한다. #}
     <meta name="htmx-config" content='{"scrollIntoViewOnBoost": false}'>
     <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+    <link rel="icon" href="{{ url_for('static', path='/favicon.svg') }}">
     {# CDN 대신 벤더링한 사본을 쓴다. 버전·업그레이드 절차는 app/static/vendor/README.md 참고. #}
     <script src="{{ url_for('static', path='/vendor/htmx.min.js') }}"></script>
     <script>
@@ -38,8 +39,8 @@
         // 상태는 클로저가 아니라 매번 DOM(body의 nav-open)에서 읽는다 — boost가
         // body 내용을 갈아끼워도 헤더 참조가 낡지 않는다.
         (function () {
-            if (window.__edutechNavToggle) { return; }
-            window.__edutechNavToggle = true;
+            if (window.__matchuNavToggle) { return; }
+            window.__matchuNavToggle = true;
 
             function setOpen(open) {
                 document.body.classList.toggle("nav-open", open);
@@ -85,8 +86,11 @@
                 aria-expanded="false" aria-controls="site-nav">☰</button>
         {# 크기는 style.css의 .site-logo img가 잡는다 — SVG 자체는 1100×220이라
            그대로 두면 헤더를 밀어낸다. alt이 곧 이 링크의 이름이다. #}
-        <span class="site-logo"><a href="/"><img
-            src="{{ url_for('static', path='/wordmark.svg') }}" alt="EDUTECH"></a></span>
+        <span class="site-logo">
+            <a href="/">
+                <img src="{{ url_for('static', path='/wordmark.svg') }}" alt="MATCHU">
+            </a>
+        </span>
         <nav class="site-nav" id="site-nav">
             {% if user %}
             <a href="/generate">교수학습과정안 생성</a>
@@ -113,7 +117,7 @@
     <footer class="site-footer">
         {# 연도는 서버에서 렌더한다. document.write로 찍으면 boost가 body를 교체한
            뒤 실행돼 문서 전체를 덮어쓴다(페이지에 연도만 남는다). #}
-        &copy; {{ current_year() }} EDUTECH
+        &copy; {{ current_year() }} MATCHU
     </footer>
     {% block page_scripts %}{% endblock %}
 </body>
