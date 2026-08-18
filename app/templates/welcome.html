@@ -6,8 +6,7 @@
    리터럴을 두지 않는다. dict 접근은 대괄호로 한다(Jinja에서 .items/.get 등은
    메서드가 잡힌다). #}
 {% set copy = {
-    "logo": "[로고 자리]",
-    "slogan": "성취기준에서 출발하는 초등 AI 수업",
+    "slogan": "성취기준에서 출발하는 초등 AI 수업, ",
     "intro": "가르치려는 AI 개념과 학년만 입력하면, 2022 개정 교육과정 성취기준을 찾아 연결하고 교수학습과정안과 학생 활동지를 함께 만들어 드립니다.",
     "features": [
         {"title": "성취기준 자동 연계", "body": "6개 교과 424개 성취기준 중에서 입력한 개념과 맞닿는 항목을 찾아 연결합니다."},
@@ -17,13 +16,12 @@
     "cta_authenticated": "교수학습과정안 생성하기",
     "cta_anonymous": "로그인"
 } %}
-{% block title %}Edutech{% endblock %}
+{% block title %}MATCHU{% endblock %}
 {% block content %}
         <section class="welcome">
-            {# PLACEHOLDER: 서비스 로고 — 확정 후 이미지 태그로 교체 #}
-            <div class="welcome-logo">{{ copy["logo"] }}</div>
+            <div class="welcome-logo"><img src="{{ url_for('static', path='/logo.svg') }}" alt="MATCHU" width="500"></div>
 
-            <h1 class="welcome-slogan">{{ copy["slogan"] }}</h1>
+            <h1 class="welcome-slogan">{{ copy["slogan"] }}<img class="welcome-wordmark" src="{{ url_for('static', path='/wordmark.svg') }}" alt="MATCHU"></h1>
 
             <p class="welcome-intro">{{ copy["intro"] }}</p>
 

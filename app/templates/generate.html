@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}교안 생성 - Edutech{% endblock %}
+{% block title %}교안 생성 - MATCHU{% endblock %}
 {% block content %}
         {% if user %}
         {# 배너는 #generate-form 바깥에 둔다. 생성이 성공하면 result.html이 폼
@@ -59,8 +59,8 @@
                 // 다시 실행된다. 리스너를 그때마다 걸면 쌓이므로 한 번만 등록하고,
                 // 상태는 클로저에 담지 않고 매번 DOM에서 읽는다(이전 페이지의
                 // form 참조가 남아 어긋나는 것을 막는다).
-                if (window.__edutechGenerationWatcher) { return; }
-                window.__edutechGenerationWatcher = true;
+                if (window.__matchuGenerationWatcher) { return; }
+                window.__matchuGenerationWatcher = true;
 
                 // 한 번 등록된 리스너는 다른 화면에서도 살아 있다. .info-form은
                 // 관리자 검색/수정 폼도 쓰므로 id로 생성 폼만 집는다.
