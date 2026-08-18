@@ -216,3 +216,7 @@ class LessonOutput(BaseModel):
     # GeneratedLessonContent.ai_principles를 그대로 echo. D 검증(REQ005)이 배열
     # 길이로 학년별 원리 개수 차등을 확인하는 데 쓴다.
     ai_principles: list[str] | None = None
+    # B(MappingResult)의 값을 그대로 echo한다. LLM 생성물이 아니다.
+    # 화면에서 "왜 이 성취기준이 선택됐는지"를 교사에게 보여주는 데 쓴다.
+    mapping_reason: str | None = None
+    analogy: str | None = None

@@ -67,6 +67,36 @@
         background: #e3ecfa;
     }
 
+    /* 공식 양식에는 없는 항목이라 표(.form) 밖에 안내 상자로 둔다. 폭·여백은
+       표와 맞춰 성취기준 행 바로 아래에 이어 붙은 것처럼 보이게 한다. */
+    .lesson-sheet .mapping-basis {
+        width: 97%;
+        margin: 0 auto 1rem;
+        border: 1px solid #c3d2f0;
+        border-radius: 6px;
+        background: #f7f9ff;
+        padding: 0.75rem 1rem;
+        box-sizing: border-box;
+    }
+
+    .lesson-sheet .mapping-basis h2 {
+        font-size: 1rem;
+        margin: 0 0 0.5rem;
+    }
+
+    .lesson-sheet .mapping-basis p {
+        margin: 0 0 0.5rem;
+    }
+
+    .lesson-sheet .mapping-basis p:last-child {
+        margin-bottom: 0;
+    }
+
+    .lesson-sheet .mapping-basis .basis-caution {
+        font-size: 0.9em;
+        color: #555;
+    }
+
     .lesson-sheet table.eval-table {
         width: 100%;
         border-collapse: collapse;
@@ -267,6 +297,27 @@
            히스토리에 저장돼 있다. #}
         <a href="/generate" class="regen-btn">새로 생성</a>
         {% endif %}
+    </div>
+    {% endif %}
+
+    {# B(매핑 에이전트)가 남긴 성취기준 선택 근거·비유. 공식 양식에 없는 항목이고
+       DOCX로도 나가지 않으므로 양식 표 안이 아니라 교안 맨 앞에 둔다 — 교사가
+       "왜 이 성취기준인지"를 먼저 읽고 본문으로 내려가게 한다. 이 필드가 추가되기
+       전에 생성된 기록은 lesson_output에 키 자체가 없어 값이 비고, 그 경우 상자를
+       통째로 숨긴다. #}
+    {% if lesson.mapping_reason or lesson.analogy %}
+    <div class="mapping-basis">
+        <h2>이 성취기준을 고른 이유</h2>
+        {% if lesson.mapping_reason %}
+        <p><strong>매핑 근거</strong><br>{{ lesson.mapping_reason }}</p>
+        {% endif %}
+        {% if lesson.analogy %}
+        <p><strong>AI 개념 비유</strong><br>{{ lesson.analogy }}</p>
+        {% endif %}
+        {# 이 값들도 교안 본문과 똑같이 AI가 만든 초안이다. 근거처럼 보이는 문장이
+           검토 없이 그대로 받아들여지지 않도록 상자 안에 명시한다. #}
+        <p class="basis-caution">이 근거와 비유는 AI가 만든 초안입니다. 수업에 쓰기 전에
+            성취기준 원문과 함께 검토하고 필요하면 고쳐 주세요.</p>
     </div>
     {% endif %}
 

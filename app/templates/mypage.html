@@ -43,6 +43,7 @@
                 <tr>
                     <th>개념</th>
                     <th>과목</th>
+                    <th>성취기준</th>
                     <th>학년</th>
                     <th>검증 상태</th>
                     <th>생성 시각</th>
@@ -57,6 +58,9 @@
                     {# dict 접근은 대괄호로 한다(Jinja에서 .items 등은 메서드가 잡힌다).
                        실패 기록은 lesson_output이 비어 과목 값이 없다. #}
                     <td>{{ item.lesson_output["subject"] or "-" }}</td>
+                    {# B가 고른 성취기준 코드. 별도 컬럼이라 lesson_output이 비어도(실패
+                       기록) 매핑까지 갔으면 값이 남는다. 매핑 전에 끊겼으면 NULL이다. #}
+                    <td>{{ item.mapped_curriculum_code or "-" }}</td>
                     <td>{{ item.target_grade }}학년</td>
                     {# lesson_output이 비면 파이프라인이 조기 종료한 실패 기록이다. #}
                     <td>
