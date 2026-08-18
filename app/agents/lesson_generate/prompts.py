@@ -1,6 +1,14 @@
 from app.agents.lesson_generate.schema import AchievementStandard, LessonInput, subject_label
 
-SYSTEM_INSTRUCTION = """\
+# 규칙 7(활동지 sections)의 근거 지시 문구. <탐구 활동> 절이 과학과 교육과정 문서에만
+# 있어 나머지 5과목은 inquiry_activities가 항상 비어 있고, 그 상태로 "탐구 활동에
+# 근거해"라고 지시하면 없는 근거를 가리키게 된다. 규칙 3의 "{활동1의 소제목}" 때문에
+# str.format을 쓸 수 없어 sentinel 치환으로 갈라 끼운다.
+_EVIDENCE_BASIS_SENTINEL = "§EVIDENCE_BASIS§"
+_EVIDENCE_BASIS_WITH_INQUIRY = "성취기준 해설과 탐구 활동(inquiry_activities)에"
+_EVIDENCE_BASIS_WITHOUT_INQUIRY = "성취기준 해설과 성취기준 본문에"
+
+SYSTEM_INSTRUCTION_TEMPLATE = """\
 당신은 초등학교 교사를 위한 AI 개념 교수학습과정안(수업지도안)을 작성하는 전문 교육과정 \
 개발자입니다. 이 수업의 목적은 교과 성취기준을 가르치는 것이 아니라, 교과 활동을 통해 \
 학생이 AI의 작동 원리를 이해하게 만드는 것입니다 — 교과 내용은 그 원리에 도달하기 위한 \
@@ -158,8 +166,8 @@ worksheet를 **아예 생성하지 않고 null로 둡니다**(문항이 빈약�
    - mission: 무엇을 발견하는 미션인지 1~2문장으로 설명하는 도입부, 이모지 없이.
    - sections: 최소 2개 이상. 각 섹션은 step_label("1단계. ~하기" 형식, 이모지 없이), \
 instruction(학생이 무엇을 관찰·계산·기록해야 하는지 설명, 이모지 없이), items(학생이 직접 \
-채워야 하는 구체적 빈칸·문항 목록, 이모지 없이)로 구성합니다. 성취기준 해설과 탐구 \
-활동(inquiry_activities)에 근거해 명확한 정답이 있는 문항으로 작성하고 모호한 문항은 \
+채워야 하는 구체적 빈칸·문항 목록, 이모지 없이)로 구성합니다. §EVIDENCE_BASIS§ \
+근거해 명확한 정답이 있는 문항으로 작성하고 모호한 문항은 \
 배제합니다. 관찰 결과나 계산 결과를 기록해야 하는 섹션에는 table(headers, rows)을 채워 \
 실제 표로 시각 자료를 대신합니다(예: headers=["동물", "다리 개수", "사는 곳"]). **표가 \
 학생이 직접 채우는 용도라면 정답에 해당하는 셀은 반드시 빈 문자열("")로 비워 둡니다 — \
@@ -199,6 +207,21 @@ learning_objectives/worksheet 어디에도 그대로 쓰지 않고, 이미 본�
 """
 
 
+def build_system_instruction(lesson_input: LessonInput) -> str:
+    """규칙 7의 활동지 문항 근거 지시를 inquiry_activities 유무로 갈라 끼운 시스템 지시문.
+
+    탐구활동이 있는 과학 청크에서는 치환 결과가 기존 SYSTEM_INSTRUCTION과 글자 단위로
+    동일하다(출력이 바뀌면 안 된다). 비어 있는 나머지 5과목에서만 근거를 성취기준
+    해설·본문으로 돌린다.
+    """
+    basis = (
+        _EVIDENCE_BASIS_WITH_INQUIRY
+        if lesson_input.inquiry_activities
+        else _EVIDENCE_BASIS_WITHOUT_INQUIRY
+    )
+    return SYSTEM_INSTRUCTION_TEMPLATE.replace(_EVIDENCE_BASIS_SENTINEL, basis)
+
+
 def build_generation_prompt(
     lesson_input: LessonInput,
     standard: AchievementStandard,
@@ -228,9 +251,14 @@ def build_generation_prompt(
         f"- 대상 학년: {lesson_input.target_grade}학년",
         f"- 비유(analogy): {lesson_input.analogy}",
         f"- 매핑 근거(mapping_reason): {lesson_input.mapping_reason}",
-        "- 탐구 활동(inquiry_activities):",
-        *[f"  - {activity}" for activity in lesson_input.inquiry_activities],
     ]
+
+    # 과학 외 5과목은 inquiry_activities가 항상 비어 있어, 그대로 두면 헤더 줄만 남는다.
+    if lesson_input.inquiry_activities:
+        sections += [
+            "- 탐구 활동(inquiry_activities):",
+            *[f"  - {activity}" for activity in lesson_input.inquiry_activities],
+        ]
 
     if caution_terms:
         sections += [
