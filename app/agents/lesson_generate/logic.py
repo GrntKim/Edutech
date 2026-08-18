@@ -3,8 +3,8 @@ from typing import Any
 
 from app.agents.lesson_generate.db_client import fetch_achievement_standard
 from app.agents.lesson_generate.prompts import (
-    SYSTEM_INSTRUCTION,
     build_generation_prompt,
+    build_system_instruction,
 )
 from app.agents.lesson_generate.schema import (
     SCHOOL_LEVEL,
@@ -167,7 +167,7 @@ def generate_lesson(
     lesson_input = build_lesson_input(mapping_result, context, retry_feedback)
     standard = fetch_achievement_standard(lesson_input.achievement_code)
     prompt = (
-        f"{SYSTEM_INSTRUCTION}\n\n"
+        f"{build_system_instruction(lesson_input)}\n\n"
         f"{build_generation_prompt(lesson_input, standard, caution_terms)}"
     )
 
@@ -205,4 +205,6 @@ def generate_lesson(
         evaluation_criteria=content.evaluation_criteria,
         worksheet=content.worksheet,
         ai_principles=content.ai_principles,
+        mapping_reason=lesson_input.mapping_reason,
+        analogy=lesson_input.analogy,
     )

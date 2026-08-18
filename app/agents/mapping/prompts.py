@@ -38,9 +38,9 @@ Rules:
 11. Write mapping_reason and analogy in Korean. All other output stays as specified below.
 12. mapping_reason is passed downstream to the lesson-generation agent, which uses it as the
     logical backbone of the entire lesson. Do not write a generic justification like "similarity
-    score is high." State concretely which activity in this chunk (inquiry_activities or
-    achievement_text) corresponds to which part of the AI concept (core_mechanism or
-    key_operations).
+    score is high." State concretely which activity in this chunk (inquiry_activities,
+    achievement_text, or explanation) corresponds to which part of the AI concept
+    (core_mechanism or key_operations).
 13. analogy must contain three parts, in order, and each part must be identifiable in the text:
     (1) what the student concretely does in the curriculum activity,
     (2) the principle that activity reveals,
@@ -53,6 +53,15 @@ Rules:
 
 def format_candidate(result: SearchResult) -> str:
     chunk = result.chunk
+
+    # inquiry_activities는 과학과 교육과정 문서에만 <탐구 활동> 절이 있어 나머지 5과목
+    # 청크에서는 항상 빈 배열이다. 그대로 두면 후보마다 "Inquiry Activities:" 헤더 뒤에
+    # 빈 줄만 붙은 블록이 후보 수만큼 쌓이므로, 값이 없으면 헤더까지 통째로 생략한다.
+    inquiry_block = (
+        f"Inquiry Activities:\n{', '.join(chunk.inquiry_activities)}\n\n"
+        if chunk.inquiry_activities
+        else ""
+    )
 
     return f"""
 Chunk ID: {chunk.chunk_id}
@@ -75,10 +84,7 @@ Achievement Text:
 Explanation:
 {chunk.explanation}
 
-Inquiry Activities:
-{", ".join(chunk.inquiry_activities)}
-
-Similarity Score:
+{inquiry_block}Similarity Score:
 {result.similarity_score:.3f}
 
 Search Reasoning:
