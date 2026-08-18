@@ -205,4 +205,6 @@ def generate_lesson(
         evaluation_criteria=content.evaluation_criteria,
         worksheet=content.worksheet,
         ai_principles=content.ai_principles,
+        mapping_reason=lesson_input.mapping_reason,
+        analogy=lesson_input.analogy,
     )
