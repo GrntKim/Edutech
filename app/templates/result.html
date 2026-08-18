@@ -92,6 +92,11 @@
         margin-bottom: 0;
     }
 
+    .lesson-sheet .mapping-basis .basis-caution {
+        font-size: 0.9em;
+        color: #555;
+    }
+
     .lesson-sheet table.eval-table {
         width: 100%;
         border-collapse: collapse;
@@ -309,6 +314,10 @@
         {% if lesson.analogy %}
         <p><strong>AI 개념 비유</strong><br>{{ lesson.analogy }}</p>
         {% endif %}
+        {# 이 값들도 교안 본문과 똑같이 AI가 만든 초안이다. 근거처럼 보이는 문장이
+           검토 없이 그대로 받아들여지지 않도록 상자 안에 명시한다. #}
+        <p class="basis-caution">이 근거와 비유는 AI가 만든 초안입니다. 수업에 쓰기 전에
+            성취기준 원문과 함께 검토하고 필요하면 고쳐 주세요.</p>
     </div>
     {% endif %}
 
