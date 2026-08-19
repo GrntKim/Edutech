@@ -779,7 +779,7 @@ def test_pages_do_not_use_document_write(client, monkeypatch):
     for path in ("/", "/generate", "/login", "/signup"):
         body = client.get(path).text
         assert "document.write" not in body, path
-        assert f"&copy; {main.current_year()} EDUTECH" in body, path
+        assert f"&copy; {main.current_year()} MATCHU" in body, path
 
 
 def test_mypage_detail_has_no_rate_banner(client, monkeypatch, user):
