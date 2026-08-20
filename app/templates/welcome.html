@@ -9,9 +9,9 @@
     "slogan": "성취기준에서 출발하는 초등 AI 수업, ",
     "intro": "가르치려는 AI 개념과 학년만 입력하면, 2022 개정 교육과정 성취기준을 찾아 연결하고 교수학습과정안과 학생 활동지를 함께 만들어 드립니다.",
     "features": [
-        {"title": "성취기준 자동 연계", "body": "6개 교과 424개 성취기준 중에서 입력한 개념과 맞닿는 항목을 찾아 연결합니다."},
-        {"title": "학년에 맞춘 난이도", "body": "같은 개념도 학년에 따라 다루는 원리의 수와 깊이를 다르게 구성합니다."},
-        {"title": "안 배운 용어는 쓰지 않음", "body": "해당 학년이 아직 배우지 않은 용어가 학생용 문장에 섞이지 않도록 검사합니다."}
+        {"title": "성취기준 자동 연계", "body": "6개 교과 424개 성취기준 중에서 입력한 개념과 일치하는 항목을 자동으로 탐색하여 연계합니다."},
+        {"title": "학년에 따른 난이도 조정", "body": "동일한 개념이라도 학년에 따라 원리의 수와 깊이를 조정하여 학습 수준에 맞게 구성합니다."},
+        {"title": "미학습 용어 사용 방지", "body": "해당 학년에 아직 배우지 않은 용어가 학생의 문장에 포함되지 않도록 자동으로 검증합니다."}
     ],
     "cta_authenticated": "교수학습과정안 생성하기",
     "cta_anonymous": "로그인"
@@ -19,7 +19,7 @@
 {% block title %}MATCHU{% endblock %}
 {% block content %}
         <section class="welcome">
-            <div class="welcome-logo"><img src="{{ url_for('static', path='/logo.svg') }}" alt="MATCHU" width="500"></div>
+            <div class="welcome-logo"><img src="{{ url_for('static', path='/logo.svg') }}" alt="MATCHU" width="360"></div>
 
             <h1 class="welcome-slogan">{{ copy["slogan"] }}<img class="welcome-wordmark" src="{{ url_for('static', path='/wordmark.svg') }}" alt="MATCHU"></h1>
 
