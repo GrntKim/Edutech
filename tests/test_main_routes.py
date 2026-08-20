@@ -355,7 +355,7 @@ def test_generate_returns_polling_panel_before_result(client, monkeypatch, saved
     assert 'id="gen-progress"' in response.text
     assert 'hx-trigger="every 1s"' in response.text
     # 첫 단계가 현재 단계로 표시되고, 다섯 단계가 모두 보인다.
-    assert '<li class="current">\n            개념 분석' in response.text
+    assert '<li class="current">\n            AI 개념 분석' in response.text
     for _code, label in main.STAGES:
         assert label in response.text
     # 결과 조각은 아직 아니다.
